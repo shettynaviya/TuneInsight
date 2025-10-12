@@ -20,7 +20,7 @@ from export_utils import (
     generate_custom_report
 )
 from sample_data import create_sample_data
-from database import initialize_database, get_all_experiments, add_experiment
+from database import initialize_database, get_all_experiments, add_experiment, bulk_import_experiments
 from utils.visualization import get_best_model_per_dataset, get_best_combo_per_dataset
 import plotly.express as px
 import plotly.graph_objects as go
@@ -566,6 +566,34 @@ def main():
     
     # Sidebar configuration
     st.sidebar.header("⚙️ Configuration")
+    
+    # Bulk import section in sidebar
+    with st.sidebar.expander("📤 Bulk Import to Database", expanded=False):
+        st.markdown("Upload a CSV file to import experiments into the database.")
+        bulk_file = st.file_uploader(
+            "Choose CSV file for bulk import",
+            type=['csv'],
+            key="bulk_import",
+            help="CSV must contain: tuning_method, best_score, time_sec. Optional: memory_bytes, dataset, model"
+        )
+        
+        if bulk_file is not None:
+            try:
+                import_df = pd.read_csv(bulk_file)
+                st.write(f"📊 Preview ({len(import_df)} rows):")
+                st.dataframe(import_df.head(3), use_container_width=True)
+                
+                if st.button("Import to Database", type="primary"):
+                    try:
+                        count = bulk_import_experiments(import_df)
+                        st.success(f"✅ Successfully imported {count} experiments to database!")
+                        st.rerun()
+                    except ValueError as e:
+                        st.error(f"❌ Import failed: {str(e)}")
+                    except Exception as e:
+                        st.error(f"❌ Import error: {str(e)}")
+            except Exception as e:
+                st.error(f"Error reading CSV: {str(e)}")
     
     # Load data
     df, is_sample = load_data()

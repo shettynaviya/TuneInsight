@@ -94,3 +94,38 @@ def update_experiment(experiment_id, **kwargs):
         
         conn.commit()
         return cursor.rowcount > 0
+
+def bulk_import_experiments(df):
+    """Bulk import experiments from a DataFrame into the database"""
+    with get_db_connection() as conn:
+        # Map DataFrame columns to database columns
+        required_cols = ['tuning_method', 'best_score', 'time_sec']
+        optional_cols = ['memory_bytes', 'dataset', 'model']
+        
+        # Check if required columns exist
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            raise ValueError(f"Missing required columns: {', '.join(missing_cols)}")
+        
+        # Prepare data for insertion
+        records = []
+        for _, row in df.iterrows():
+            record = {
+                'tuning_method': row['tuning_method'],
+                'best_score': row['best_score'],
+                'time_sec': row['time_sec'],
+                'memory_bytes': row.get('memory_bytes', None),
+                'dataset': row.get('dataset', None),
+                'model': row.get('model', None)
+            }
+            records.append(record)
+        
+        # Insert records
+        cursor = conn.cursor()
+        cursor.executemany("""
+            INSERT INTO experiments (tuning_method, best_score, time_sec, memory_bytes, dataset, model)
+            VALUES (:tuning_method, :best_score, :time_sec, :memory_bytes, :dataset, :model)
+        """, records)
+        
+        conn.commit()
+        return cursor.rowcount
