@@ -456,6 +456,124 @@ def create_statistical_deep_dive_plots(df):
     
     return plots
 
+def test_model_dataset_significance(df, alpha=0.05):
+    """Test statistical significance between model-dataset combinations"""
+    results = {}
+    
+    try:
+        if not all(col in df.columns for col in ['dataset', 'model', 'best_score']):
+            return {'error': 'Required columns (dataset, model, best_score) not found'}
+        
+        # Group by dataset and run tests for each
+        dataset_results = []
+        
+        for dataset in df['dataset'].unique():
+            dataset_df = df[df['dataset'] == dataset]
+            models = dataset_df['model'].unique()
+            
+            if len(models) < 2:
+                continue
+            
+            # Get model groups
+            model_groups = [dataset_df[dataset_df['model'] == model]['best_score'].dropna() 
+                           for model in models]
+            model_names = [model for model in models]
+            
+            # Test normality
+            normal_groups = []
+            for group in model_groups:
+                if len(group) >= 3:
+                    _, p_val = shapiro(group)
+                    normal_groups.append(p_val > alpha)
+                else:
+                    normal_groups.append(False)
+            
+            # Choose appropriate test
+            if len(model_groups) > 1:
+                if all(normal_groups):
+                    # Use ANOVA
+                    stat, p_val = f_oneway(*model_groups)
+                    test_name = "ANOVA"
+                else:
+                    # Use Kruskal-Wallis
+                    stat, p_val = kruskal(*model_groups)
+                    test_name = "Kruskal-Wallis"
+                
+                # Calculate effect size (eta-squared for ANOVA-like measure)
+                all_scores = dataset_df['best_score'].values
+                group_means = [np.mean(g) for g in model_groups]
+                grand_mean = np.mean(all_scores)
+                
+                ss_between = sum(len(g) * (np.mean(g) - grand_mean)**2 for g in model_groups)
+                ss_total = sum((score - grand_mean)**2 for score in all_scores)
+                eta_squared = ss_between / ss_total if ss_total > 0 else 0
+                
+                dataset_results.append({
+                    'dataset': dataset,
+                    'test': test_name,
+                    'statistic': round(stat, 4),
+                    'p_value': round(p_val, 6),
+                    'significant': p_val < alpha,
+                    'eta_squared': round(eta_squared, 4),
+                    'num_models': len(models)
+                })
+        
+        results['dataset_tests'] = dataset_results
+        
+        # Pairwise comparisons for significant datasets
+        pairwise_results = []
+        for dataset_result in dataset_results:
+            if dataset_result['significant']:
+                dataset = dataset_result['dataset']
+                dataset_df = df[df['dataset'] == dataset]
+                models = dataset_df['model'].unique()
+                
+                for i in range(len(models)):
+                    for j in range(i + 1, len(models)):
+                        model1, model2 = models[i], models[j]
+                        group1 = dataset_df[dataset_df['model'] == model1]['best_score'].dropna()
+                        group2 = dataset_df[dataset_df['model'] == model2]['best_score'].dropna()
+                        
+                        if len(group1) > 0 and len(group2) > 0:
+                            # Use Mann-Whitney U test for pairwise comparison
+                            stat, p_val = mannwhitneyu(group1, group2, alternative='two-sided')
+                            
+                            # Cohen's d effect size
+                            pooled_std = np.sqrt(((len(group1) - 1) * np.var(group1, ddof=1) + 
+                                                (len(group2) - 1) * np.var(group2, ddof=1)) / 
+                                               (len(group1) + len(group2) - 2))
+                            if pooled_std > 0:
+                                cohens_d = (np.mean(group1) - np.mean(group2)) / pooled_std
+                            else:
+                                cohens_d = 0
+                            
+                            pairwise_results.append({
+                                'dataset': dataset,
+                                'model1': model1,
+                                'model2': model2,
+                                'mean1': round(np.mean(group1), 4),
+                                'mean2': round(np.mean(group2), 4),
+                                'p_value': round(p_val, 6),
+                                'significant': p_val < alpha,
+                                'cohens_d': round(cohens_d, 4),
+                                'effect_size': 'Small' if abs(cohens_d) < 0.5 else 'Medium' if abs(cohens_d) < 0.8 else 'Large'
+                            })
+        
+        results['pairwise_comparisons'] = pairwise_results
+        
+        # Summary statistics
+        sig_count = sum(1 for r in dataset_results if r.get('significant', False))
+        results['summary'] = {
+            'total_datasets': len(dataset_results),
+            'significant_datasets': sig_count,
+            'significance_rate': round(sig_count / len(dataset_results), 3) if len(dataset_results) > 0 else 0
+        }
+        
+    except Exception as e:
+        results['error'] = str(e)
+    
+    return results
+
 def compare_resource_modes(df, mode='memory_usage'):
     """Compare different resource usage modes"""
     try:

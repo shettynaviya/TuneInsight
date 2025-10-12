@@ -10,7 +10,8 @@ from analysis_utils import (
     create_resource_efficiency_plots,
     create_convergence_analysis_plots,
     create_statistical_deep_dive_plots,
-    compare_resource_modes
+    compare_resource_modes,
+    test_model_dataset_significance
 )
 from export_utils import (
     export_to_excel,
@@ -466,6 +467,118 @@ def display_best_model_tuning_analysis(df):
     except Exception as e:
         st.error(f"Error in best model analysis: {str(e)}")
 
+def display_model_dataset_significance(df):
+    """Display statistical significance testing for model-dataset combinations"""
+    st.markdown('<div class="section-header"><h2>📊 Model-Dataset Statistical Significance</h2></div>', unsafe_allow_html=True)
+    
+    required_cols = ['dataset', 'model', 'best_score']
+    if not all(col in df.columns for col in required_cols):
+        st.warning("This analysis requires dataset, model, and best_score columns.")
+        return
+    
+    alpha = st.slider("Significance level (α):", 0.01, 0.10, 0.05, 0.01, key="sig_alpha")
+    
+    with st.spinner("Running statistical tests..."):
+        results = test_model_dataset_significance(df, alpha=alpha)
+    
+    if 'error' in results:
+        st.error(f"Error in significance testing: {results['error']}")
+        return
+    
+    # Display summary
+    if 'summary' in results:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Datasets Tested", results['summary']['total_datasets'])
+        with col2:
+            st.metric("Significant Differences", results['summary']['significant_datasets'])
+        with col3:
+            sig_rate = results['summary']['significance_rate'] * 100
+            st.metric("Significance Rate", f"{sig_rate:.1f}%")
+    
+    # Display dataset tests
+    if 'dataset_tests' in results and results['dataset_tests']:
+        st.subheader("📈 Statistical Tests by Dataset")
+        
+        dataset_df = pd.DataFrame(results['dataset_tests'])
+        
+        # Color code by significance
+        def highlight_significant(row):
+            if row['significant']:
+                return ['background-color: #d4edda'] * len(row)
+            else:
+                return [''] * len(row)
+        
+        styled_df = dataset_df.style.apply(highlight_significant, axis=1)
+        st.dataframe(styled_df, use_container_width=True)
+        
+        # Create visualization
+        fig = px.bar(dataset_df, x='dataset', y='eta_squared', 
+                    color='significant',
+                    title='Effect Size (η²) by Dataset',
+                    labels={'eta_squared': 'Effect Size (η²)', 'dataset': 'Dataset'},
+                    color_discrete_map={True: '#28a745', False: '#6c757d'})
+        fig.add_hline(y=0.01, line_dash="dash", line_color="orange", 
+                     annotation_text="Small effect (0.01)")
+        fig.add_hline(y=0.06, line_dash="dash", line_color="red", 
+                     annotation_text="Medium effect (0.06)")
+        fig.update_layout(height=400)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Display pairwise comparisons
+    if 'pairwise_comparisons' in results and results['pairwise_comparisons']:
+        st.subheader("🔍 Pairwise Model Comparisons (Significant Datasets Only)")
+        
+        pairwise_df = pd.DataFrame(results['pairwise_comparisons'])
+        
+        # Filter options
+        datasets_in_pairwise = pairwise_df['dataset'].unique()
+        selected_dataset_view = st.selectbox(
+            "View comparisons for dataset:",
+            ['All'] + list(datasets_in_pairwise)
+        )
+        
+        if selected_dataset_view != 'All':
+            pairwise_df = pairwise_df[pairwise_df['dataset'] == selected_dataset_view]
+        
+        st.dataframe(pairwise_df, use_container_width=True)
+        
+        # Visualization of pairwise comparisons
+        if not pairwise_df.empty:
+            pairwise_df['comparison'] = pairwise_df['model1'] + ' vs ' + pairwise_df['model2']
+            fig2 = px.bar(pairwise_df, x='comparison', y='cohens_d',
+                         color='effect_size',
+                         facet_col='dataset' if selected_dataset_view == 'All' else None,
+                         title="Effect Sizes (Cohen's d) for Model Comparisons",
+                         labels={'cohens_d': "Cohen's d", 'comparison': 'Model Comparison'},
+                         color_discrete_map={'Small': '#ffc107', 'Medium': '#fd7e14', 'Large': '#dc3545'})
+            fig2.update_xaxes(tickangle=-45)
+            fig2.update_layout(height=500)
+            st.plotly_chart(fig2, use_container_width=True)
+    
+    # Interpretation guide
+    with st.expander("📚 How to Interpret Results", expanded=False):
+        st.markdown("""
+        **P-value:** Probability that the observed differences occurred by chance
+        - p < 0.05: Statistically significant difference
+        - p ≥ 0.05: No significant difference
+        
+        **Effect Size (η²):**
+        - Small: η² ≈ 0.01
+        - Medium: η² ≈ 0.06
+        - Large: η² ≥ 0.14
+        
+        **Cohen's d:**
+        - Small: |d| < 0.5
+        - Medium: 0.5 ≤ |d| < 0.8
+        - Large: |d| ≥ 0.8
+        
+        **Tests Used:**
+        - ANOVA: When data is normally distributed
+        - Kruskal-Wallis: When data is not normally distributed
+        - Mann-Whitney U: For pairwise comparisons
+        """)
+
 def display_resource_comparison(df):
     """Display resource comparison analysis - EXISTING SECTION"""
     st.markdown('<div class="section-header"><h2>💻 Resource Comparison Analysis</h2></div>', unsafe_allow_html=True)
@@ -701,6 +814,11 @@ def main():
         
         # Section 6: Best Model & Tuning Method Analysis (NEW)
         display_best_model_tuning_analysis(df)
+        
+        st.markdown("---")
+        
+        # Section 6b: Model-Dataset Statistical Significance (NEW)
+        display_model_dataset_significance(df)
         
         st.markdown("---")
         
