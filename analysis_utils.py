@@ -574,6 +574,92 @@ def test_model_dataset_significance(df, alpha=0.05):
     
     return results
 
+def analyze_performance_trends(df):
+    """Analyze performance trends over time with historical tracking"""
+    results = {}
+    
+    try:
+        if 'created_at' not in df.columns:
+            return {'error': 'created_at column not found for time-based analysis'}
+        
+        # Convert to datetime
+        df_time = df.copy()
+        df_time['created_at'] = pd.to_datetime(df_time['created_at'])
+        df_time = df_time.sort_values('created_at')
+        
+        # Overall trend over time
+        if 'best_score' in df_time.columns:
+            # Group by date and calculate statistics
+            df_time['date'] = df_time['created_at'].dt.date
+            daily_stats = df_time.groupby('date')['best_score'].agg(['mean', 'std', 'count']).reset_index()
+            daily_stats.columns = ['date', 'mean_score', 'std_score', 'num_experiments']
+            
+            # Calculate cumulative best score
+            df_time['cumulative_best'] = df_time['best_score'].expanding().max()
+            
+            results['daily_stats'] = daily_stats.to_dict('records')
+            results['overall_trend'] = df_time[['created_at', 'best_score', 'cumulative_best']].to_dict('records')
+        
+        # Model performance trends
+        if 'model' in df_time.columns and 'best_score' in df_time.columns:
+            model_trends = []
+            for model in df_time['model'].unique():
+                model_df = df_time[df_time['model'] == model].copy()
+                model_df['date'] = model_df['created_at'].dt.date
+                model_daily = model_df.groupby('date')['best_score'].mean().reset_index()
+                model_daily['model'] = model
+                model_trends.append(model_daily)
+            
+            if model_trends:
+                results['model_trends'] = pd.concat(model_trends, ignore_index=True).to_dict('records')
+        
+        # Dataset performance trends
+        if 'dataset' in df_time.columns and 'best_score' in df_time.columns:
+            dataset_trends = []
+            for dataset in df_time['dataset'].unique():
+                dataset_df = df_time[df_time['dataset'] == dataset].copy()
+                dataset_df['date'] = dataset_df['created_at'].dt.date
+                dataset_daily = dataset_df.groupby('date')['best_score'].mean().reset_index()
+                dataset_daily['dataset'] = dataset
+                dataset_trends.append(dataset_daily)
+            
+            if dataset_trends:
+                results['dataset_trends'] = pd.concat(dataset_trends, ignore_index=True).to_dict('records')
+        
+        # Tuning method trends
+        if 'tuning_method' in df_time.columns and 'best_score' in df_time.columns:
+            method_trends = []
+            for method in df_time['tuning_method'].unique():
+                method_df = df_time[df_time['tuning_method'] == method].copy()
+                method_df['date'] = method_df['created_at'].dt.date
+                method_daily = method_df.groupby('date')['best_score'].mean().reset_index()
+                method_daily['tuning_method'] = method
+                method_trends.append(method_daily)
+            
+            if method_trends:
+                results['method_trends'] = pd.concat(method_trends, ignore_index=True).to_dict('records')
+        
+        # Performance improvement rate
+        if 'best_score' in df_time.columns and len(df_time) > 1:
+            first_score = df_time['best_score'].iloc[0]
+            last_score = df_time['best_score'].iloc[-1]
+            best_score = df_time['best_score'].max()
+            
+            improvement_rate = ((last_score - first_score) / first_score * 100) if first_score != 0 else 0
+            
+            results['improvement_metrics'] = {
+                'first_score': round(float(first_score), 4),
+                'last_score': round(float(last_score), 4),
+                'best_score': round(float(best_score), 4),
+                'improvement_rate': round(improvement_rate, 2),
+                'total_experiments': len(df_time)
+            }
+        
+    except Exception as e:
+        results['error'] = str(e)
+    
+    return results
+
 def compare_resource_modes(df, mode='memory_usage'):
     """Compare different resource usage modes"""
     try:

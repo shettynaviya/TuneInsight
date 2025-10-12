@@ -11,7 +11,8 @@ from analysis_utils import (
     create_convergence_analysis_plots,
     create_statistical_deep_dive_plots,
     compare_resource_modes,
-    test_model_dataset_significance
+    test_model_dataset_significance,
+    analyze_performance_trends
 )
 from export_utils import (
     export_to_excel,
@@ -579,6 +580,132 @@ def display_model_dataset_significance(df):
         - Mann-Whitney U: For pairwise comparisons
         """)
 
+def display_performance_trends(df):
+    """Display performance trends over time with historical tracking"""
+    st.markdown('<div class="section-header"><h2>📈 Performance Trends Over Time</h2></div>', unsafe_allow_html=True)
+    
+    if 'created_at' not in df.columns:
+        st.warning("This analysis requires a 'created_at' column for time-based tracking.")
+        return
+    
+    with st.spinner("Analyzing performance trends..."):
+        trends = analyze_performance_trends(df)
+    
+    if 'error' in trends:
+        st.error(f"Error analyzing trends: {trends['error']}")
+        return
+    
+    # Display improvement metrics
+    if 'improvement_metrics' in trends:
+        metrics = trends['improvement_metrics']
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("First Score", f"{metrics['first_score']:.4f}")
+        with col2:
+            st.metric("Latest Score", f"{metrics['last_score']:.4f}")
+        with col3:
+            st.metric("Best Score", f"{metrics['best_score']:.4f}")
+        with col4:
+            delta_color = "normal" if metrics['improvement_rate'] >= 0 else "inverse"
+            st.metric("Improvement Rate", f"{metrics['improvement_rate']:.2f}%")
+    
+    # Tabs for different trend views
+    trend_tabs = st.tabs(["Overall Trends", "Model Trends", "Dataset Trends", "Method Trends"])
+    
+    with trend_tabs[0]:
+        if 'overall_trend' in trends:
+            overall_df = pd.DataFrame(trends['overall_trend'])
+            
+            # Create overall trend plot
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=overall_df['created_at'],
+                y=overall_df['best_score'],
+                mode='markers',
+                name='Individual Experiments',
+                marker=dict(size=6, opacity=0.6)
+            ))
+            fig.add_trace(go.Scatter(
+                x=overall_df['created_at'],
+                y=overall_df['cumulative_best'],
+                mode='lines',
+                name='Cumulative Best',
+                line=dict(color='red', width=3)
+            ))
+            fig.update_layout(
+                title='Performance Over Time',
+                xaxis_title='Date',
+                yaxis_title='Best Score',
+                height=500
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Daily statistics
+            if 'daily_stats' in trends:
+                st.subheader("📊 Daily Statistics")
+                daily_df = pd.DataFrame(trends['daily_stats'])
+                
+                fig2 = go.Figure()
+                fig2.add_trace(go.Bar(
+                    x=daily_df['date'],
+                    y=daily_df['num_experiments'],
+                    name='Number of Experiments',
+                    marker_color='lightblue'
+                ))
+                fig2.update_layout(
+                    title='Daily Experiment Count',
+                    xaxis_title='Date',
+                    yaxis_title='Number of Experiments',
+                    height=300
+                )
+                st.plotly_chart(fig2, use_container_width=True)
+    
+    with trend_tabs[1]:
+        if 'model_trends' in trends:
+            model_df = pd.DataFrame(trends['model_trends'])
+            
+            fig3 = px.line(model_df, x='date', y='best_score', color='model',
+                          title='Model Performance Trends Over Time',
+                          labels={'best_score': 'Average Score', 'date': 'Date'})
+            fig3.update_layout(height=500)
+            st.plotly_chart(fig3, use_container_width=True)
+            
+            st.dataframe(model_df.pivot_table(index='date', columns='model', values='best_score'), 
+                        use_container_width=True)
+        else:
+            st.info("Model performance trends require 'model' column in data.")
+    
+    with trend_tabs[2]:
+        if 'dataset_trends' in trends:
+            dataset_df = pd.DataFrame(trends['dataset_trends'])
+            
+            fig4 = px.line(dataset_df, x='date', y='best_score', color='dataset',
+                          title='Dataset Performance Trends Over Time',
+                          labels={'best_score': 'Average Score', 'date': 'Date'})
+            fig4.update_layout(height=500)
+            st.plotly_chart(fig4, use_container_width=True)
+            
+            st.dataframe(dataset_df.pivot_table(index='date', columns='dataset', values='best_score'),
+                        use_container_width=True)
+        else:
+            st.info("Dataset performance trends require 'dataset' column in data.")
+    
+    with trend_tabs[3]:
+        if 'method_trends' in trends:
+            method_df = pd.DataFrame(trends['method_trends'])
+            
+            fig5 = px.line(method_df, x='date', y='best_score', color='tuning_method',
+                          title='Tuning Method Performance Trends Over Time',
+                          labels={'best_score': 'Average Score', 'date': 'Date'})
+            fig5.update_layout(height=500)
+            st.plotly_chart(fig5, use_container_width=True)
+            
+            st.dataframe(method_df.pivot_table(index='date', columns='tuning_method', values='best_score'),
+                        use_container_width=True)
+        else:
+            st.info("Tuning method trends require 'tuning_method' column in data.")
+
 def display_resource_comparison(df):
     """Display resource comparison analysis - EXISTING SECTION"""
     st.markdown('<div class="section-header"><h2>💻 Resource Comparison Analysis</h2></div>', unsafe_allow_html=True)
@@ -819,6 +946,11 @@ def main():
         
         # Section 6b: Model-Dataset Statistical Significance (NEW)
         display_model_dataset_significance(df)
+        
+        st.markdown("---")
+        
+        # Section 6c: Performance Trends Over Time (NEW)
+        display_performance_trends(df)
         
         st.markdown("---")
         
