@@ -336,10 +336,20 @@ def create_resource_efficiency_plots(df):
         
         # Efficiency scatter (score vs resources)
         if all(col in df.columns for col in ['best_score', 'time_sec']):
-            fig = px.scatter(df, x='time_sec', y='best_score',
-                           size='memory_bytes' if 'memory_bytes' in df.columns else None,
+            # Create a clean dataframe for the scatter plot
+            df_clean = df.copy()
+            
+            # Use memory_bytes for size only if it has non-null values
+            size_col = None
+            if 'memory_bytes' in df.columns and df['memory_bytes'].notna().any():
+                # Fill NaN values with the mean to avoid plot errors
+                df_clean['memory_bytes_clean'] = df_clean['memory_bytes'].fillna(df_clean['memory_bytes'].mean())
+                size_col = 'memory_bytes_clean'
+            
+            fig = px.scatter(df_clean, x='time_sec', y='best_score',
+                           size=size_col,
                            color='tuning_method' if 'tuning_method' in df.columns else None,
-                           title='Efficiency Analysis: Score vs Time (bubble size = memory)')
+                           title='Efficiency Analysis: Score vs Time' + (' (bubble size = memory)' if size_col else ''))
             plots['efficiency_scatter'] = fig
         
         # Scalability analysis
