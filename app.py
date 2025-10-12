@@ -599,6 +599,75 @@ def main():
     df, is_sample = load_data()
     
     if df is not None:
+        # Advanced filtering section in sidebar
+        with st.sidebar.expander("🔍 Advanced Filters", expanded=False):
+            st.markdown("Filter experiments by criteria:")
+            
+            # Dataset filter
+            if 'dataset' in df.columns:
+                datasets = ['All'] + sorted(df['dataset'].dropna().unique().tolist())
+                selected_dataset = st.selectbox("Filter by Dataset:", datasets)
+                if selected_dataset != 'All':
+                    df = df[df['dataset'] == selected_dataset]
+            
+            # Model filter
+            if 'model' in df.columns:
+                models = ['All'] + sorted(df['model'].dropna().unique().tolist())
+                selected_model = st.selectbox("Filter by Model:", models)
+                if selected_model != 'All':
+                    df = df[df['model'] == selected_model]
+            
+            # Tuning method filter
+            if 'tuning_method' in df.columns:
+                methods = ['All'] + sorted(df['tuning_method'].dropna().unique().tolist())
+                selected_method = st.selectbox("Filter by Tuning Method:", methods)
+                if selected_method != 'All':
+                    df = df[df['tuning_method'] == selected_method]
+            
+            # Date range filter
+            if 'created_at' in df.columns:
+                try:
+                    df['created_at'] = pd.to_datetime(df['created_at'])
+                    min_date = df['created_at'].min().date()
+                    max_date = df['created_at'].max().date()
+                    
+                    st.markdown("**Date Range:**")
+                    date_range = st.date_input(
+                        "Select date range:",
+                        value=(min_date, max_date),
+                        min_value=min_date,
+                        max_value=max_date,
+                        key="date_filter"
+                    )
+                    
+                    if len(date_range) == 2:
+                        start_date, end_date = date_range
+                        df = df[(df['created_at'].dt.date >= start_date) & (df['created_at'].dt.date <= end_date)]
+                except Exception as e:
+                    st.warning(f"Date filtering not available: {str(e)}")
+            
+            # Score range filter
+            if 'best_score' in df.columns:
+                min_score = float(df['best_score'].min())
+                max_score = float(df['best_score'].max())
+                
+                st.markdown("**Score Range:**")
+                if min_score == max_score:
+                    st.info(f"All scores are {min_score:.4f}")
+                else:
+                    score_range = st.slider(
+                        "Filter by score:",
+                        min_value=min_score,
+                        max_value=max_score,
+                        value=(min_score, max_score),
+                        step=0.01
+                    )
+                    df = df[(df['best_score'] >= score_range[0]) & (df['best_score'] <= score_range[1])]
+            
+            # Show filtered count
+            st.info(f"📊 Showing {len(df)} filtered experiments")
+    
+    if df is not None and len(df) > 0:
         # Display data overview
         display_data_overview(df)
         
@@ -657,6 +726,8 @@ def main():
         st.markdown("---")
         st.markdown("*Dashboard generated with ❤️ using Streamlit*")
     
+    elif df is not None and len(df) == 0:
+        st.warning("⚠️ No experiments match the selected filters. Please adjust your filter criteria.")
     else:
         st.info("👆 Please load your data using one of the options above to begin analysis.")
 
