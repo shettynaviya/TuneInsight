@@ -19,7 +19,8 @@ from export_utils import (
     export_to_csv,
     export_plots_to_html,
     export_summary_to_json,
-    generate_custom_report
+    generate_custom_report,
+    export_to_pdf
 )
 from sample_data import create_sample_data
 from database import initialize_database, get_all_experiments, add_experiment, bulk_import_experiments
@@ -776,6 +777,29 @@ def display_export_options(df):
                         file_name=f"analysis_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
                         mime="application/json"
                     )
+        
+        st.markdown("---")
+        
+        # PDF Export (new feature)
+        st.subheader("📄 PDF Report Export")
+        col3, col4 = st.columns(2)
+        
+        with col3:
+            st.write("Generate a comprehensive PDF report with all analysis results.")
+        
+        with col4:
+            if st.button("📄 Generate PDF Report", type="primary"):
+                with st.spinner("Generating PDF report..."):
+                    pdf_data = export_to_pdf(df)
+                    if pdf_data:
+                        st.download_button(
+                            label="Download PDF Report",
+                            data=pdf_data,
+                            file_name=f"experiment_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                            mime="application/pdf"
+                        )
+                    else:
+                        st.error("Failed to generate PDF report.")
     
     with export_tabs[1]:
         report_type = st.selectbox("Select report type:", ["Executive Summary", "Technical Report", "Comparison Report"])

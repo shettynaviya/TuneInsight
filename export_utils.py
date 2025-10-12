@@ -6,6 +6,14 @@ from datetime import datetime
 import plotly.graph_objects as go
 import plotly.express as px
 from analysis_utils import create_plots, run_statistical_tests
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+import tempfile
+import os
 
 def export_to_excel(df):
     """Export data to Excel format"""
@@ -126,6 +134,250 @@ def export_summary_to_json(df):
         
     except Exception as e:
         print(f"Error exporting summary to JSON: {e}")
+        return None
+
+def export_to_pdf(df, include_visualizations=True):
+    """Export comprehensive report to PDF format"""
+    try:
+        # Create temporary file for PDF
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+        pdf_path = temp_file.name
+        temp_file.close()
+        
+        # Create PDF document
+        doc = SimpleDocTemplate(pdf_path, pagesize=letter,
+                               rightMargin=72, leftMargin=72,
+                               topMargin=72, bottomMargin=18)
+        
+        # Container for the 'Flowable' objects
+        elements = []
+        
+        # Define styles
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=24,
+            textColor=colors.HexColor('#1f77b4'),
+            spaceAfter=30,
+            alignment=TA_CENTER
+        )
+        heading_style = ParagraphStyle(
+            'CustomHeading',
+            parent=styles['Heading2'],
+            fontSize=16,
+            textColor=colors.HexColor('#17becf'),
+            spaceAfter=12,
+            spaceBefore=12
+        )
+        
+        # Add title
+        title = Paragraph("Experiment Analysis Report", title_style)
+        elements.append(title)
+        
+        # Add generation date
+        date_text = Paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal'])
+        elements.append(date_text)
+        elements.append(Spacer(1, 20))
+        
+        # Executive Summary
+        elements.append(Paragraph("Executive Summary", heading_style))
+        
+        summary_data = [
+            ['Metric', 'Value'],
+            ['Total Experiments', str(len(df))],
+        ]
+        
+        if 'tuning_method' in df.columns:
+            summary_data.append(['Tuning Methods', str(df['tuning_method'].nunique())])
+        
+        if 'dataset' in df.columns:
+            summary_data.append(['Datasets', str(df['dataset'].nunique())])
+        
+        if 'model' in df.columns:
+            summary_data.append(['Models', str(df['model'].nunique())])
+        
+        if 'best_score' in df.columns:
+            summary_data.append(['Best Score', f"{df['best_score'].max():.4f}"])
+            summary_data.append(['Average Score', f"{df['best_score'].mean():.4f}"])
+        
+        summary_table = Table(summary_data, colWidths=[3*inch, 3*inch])
+        summary_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f77b4')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        elements.append(summary_table)
+        elements.append(Spacer(1, 20))
+        
+        # Performance Statistics by Method
+        if 'tuning_method' in df.columns and 'best_score' in df.columns:
+            elements.append(PageBreak())
+            elements.append(Paragraph("Performance by Tuning Method", heading_style))
+            
+            method_stats = df.groupby('tuning_method')['best_score'].agg(['count', 'mean', 'std', 'min', 'max']).round(4)
+            method_data = [['Method', 'Count', 'Mean', 'Std', 'Min', 'Max']]
+            
+            for method, row in method_stats.iterrows():
+                method_data.append([
+                    str(method),
+                    str(int(row['count'])),
+                    f"{row['mean']:.4f}",
+                    f"{row['std']:.4f}",
+                    f"{row['min']:.4f}",
+                    f"{row['max']:.4f}"
+                ])
+            
+            method_table = Table(method_data, colWidths=[1.5*inch, 0.8*inch, 0.9*inch, 0.9*inch, 0.9*inch, 0.9*inch])
+            method_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#17becf')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.lightgrey),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            elements.append(method_table)
+            elements.append(Spacer(1, 20))
+        
+        # Model Performance Comparison
+        if 'model' in df.columns and 'best_score' in df.columns:
+            elements.append(PageBreak())
+            elements.append(Paragraph("Model Performance Comparison", heading_style))
+            
+            model_stats = df.groupby('model')['best_score'].agg(['count', 'mean', 'std']).round(4)
+            model_stats = model_stats.sort_values('mean', ascending=False)
+            
+            model_data = [['Model', 'Experiments', 'Average Score', 'Std Dev']]
+            for model, row in model_stats.iterrows():
+                model_data.append([
+                    str(model),
+                    str(int(row['count'])),
+                    f"{row['mean']:.4f}",
+                    f"{row['std']:.4f}"
+                ])
+            
+            model_table = Table(model_data, colWidths=[2.5*inch, 1.5*inch, 1.5*inch, 1.5*inch])
+            model_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#17becf')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.lightgrey),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            elements.append(model_table)
+            elements.append(Spacer(1, 20))
+        
+        # Dataset Analysis
+        if 'dataset' in df.columns and 'best_score' in df.columns:
+            elements.append(PageBreak())
+            elements.append(Paragraph("Dataset Performance Analysis", heading_style))
+            
+            dataset_stats = df.groupby('dataset')['best_score'].agg(['count', 'mean', 'std']).round(4)
+            
+            dataset_data = [['Dataset', 'Experiments', 'Average Score', 'Std Dev']]
+            for dataset, row in dataset_stats.iterrows():
+                dataset_data.append([
+                    str(dataset),
+                    str(int(row['count'])),
+                    f"{row['mean']:.4f}",
+                    f"{row['std']:.4f}"
+                ])
+            
+            dataset_table = Table(dataset_data, colWidths=[2.5*inch, 1.5*inch, 1.5*inch, 1.5*inch])
+            dataset_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#17becf')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.lightgrey),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            elements.append(dataset_table)
+            elements.append(Spacer(1, 20))
+        
+        # Statistical Analysis Summary
+        if 'tuning_method' in df.columns and 'best_score' in df.columns:
+            elements.append(PageBreak())
+            elements.append(Paragraph("Statistical Analysis Summary", heading_style))
+            
+            stats_results = run_statistical_tests(df, metric='best_score', alpha=0.05)
+            
+            if 'overall_test' in stats_results and 'error' not in stats_results['overall_test']:
+                overall = stats_results['overall_test']
+                stats_text = f"""
+                <b>Overall Test:</b> {overall['test']}<br/>
+                <b>Test Statistic:</b> {overall['statistic']:.4f}<br/>
+                <b>P-value:</b> {overall['p_value']:.6f}<br/>
+                <b>Result:</b> {overall['interpretation']}<br/>
+                """
+                elements.append(Paragraph(stats_text, styles['Normal']))
+                elements.append(Spacer(1, 12))
+        
+        # Best Combinations
+        if all(col in df.columns for col in ['dataset', 'model', 'tuning_method', 'best_score']):
+            elements.append(PageBreak())
+            elements.append(Paragraph("Top Performing Combinations", heading_style))
+            
+            combo_stats = df.groupby(['dataset', 'model', 'tuning_method'])['best_score'].mean().reset_index()
+            top_combos = combo_stats.nlargest(10, 'best_score')
+            
+            combo_data = [['Dataset', 'Model', 'Method', 'Score']]
+            for _, row in top_combos.iterrows():
+                combo_data.append([
+                    str(row['dataset'])[:15],
+                    str(row['model'])[:15],
+                    str(row['tuning_method'])[:15],
+                    f"{row['best_score']:.4f}"
+                ])
+            
+            combo_table = Table(combo_data, colWidths=[1.8*inch, 1.8*inch, 1.8*inch, 1*inch])
+            combo_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#17becf')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.lightgrey),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            elements.append(combo_table)
+        
+        # Footer
+        elements.append(Spacer(1, 30))
+        footer_text = Paragraph(
+            "This report was generated automatically by the Advanced Experiment Analysis Dashboard",
+            styles['Italic']
+        )
+        elements.append(footer_text)
+        
+        # Build PDF
+        doc.build(elements)
+        
+        # Read the PDF file
+        with open(pdf_path, 'rb') as f:
+            pdf_data = f.read()
+        
+        # Clean up temp file
+        os.unlink(pdf_path)
+        
+        return pdf_data
+        
+    except Exception as e:
+        print(f"Error exporting to PDF: {e}")
         return None
 
 def generate_custom_report(df, report_type='executive_summary', include_plots=True, include_stats=True):
