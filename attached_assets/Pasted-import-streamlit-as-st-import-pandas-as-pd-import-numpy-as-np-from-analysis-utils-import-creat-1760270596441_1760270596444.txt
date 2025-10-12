@@ -1,0 +1,2572 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+from analysis_utils import (
+    create_plots, 
+    run_statistical_tests, 
+    generate_summary_report,
+    create_model_performance_plots,
+    create_dataset_analysis_plots,
+    create_resource_efficiency_plots,
+    create_convergence_analysis_plots,
+    create_statistical_deep_dive_plots,
+    compare_resource_modes
+)
+from export_utils import (
+    export_to_excel,
+    export_to_csv,
+    export_plots_to_html,
+    export_summary_to_json,
+    generate_custom_report
+)
+from sample_data import create_sample_data
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import datetime
+import json
+
+# Page configuration
+st.set_page_config(
+    page_title="Advanced Experiment Analysis Dashboard",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS for better styling
+st.markdown("""
+<style>
+    .metric-card {
+        background-color: #f0f2f6;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        border-left: 4px solid #1f77b4;
+    }
+    .section-header {
+        background: linear-gradient(90deg, #1f77b4, #17becf);
+        color: white;
+        padding: 0.5rem 1rem;
+        border-radius: 0.5rem;
+        margin: 1rem 0;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+def load_data():
+    """Load data from uploaded file or create sample data"""
+    uploaded_file = st.file_uploader(
+        "Upload your experiment results CSV file", 
+        type=['csv'],
+        help="Upload a CSV file containing your experiment results with columns like tuning_method, best_score, time_sec, etc."
+    )
+    
+    if uploaded_file is not None:
+        try:
+            df = pd.read_csv(uploaded_file)
+            st.success(f"✅ Data loaded successfully! Found {len(df)} experiments.")
+            return df, False
+        except Exception as e:
+            st.error(f"Error loading data: {str(e)}")
+            return None, False
+    else:
+        if st.checkbox("Use sample data for demonstration", value=True):
+            df = create_sample_data()
+            st.info(f"📊 Using sample data with {len(df)} experiments for demonstration.")
+            return df, True
+        else:
+            st.warning("Please upload a CSV file or enable sample data to proceed.")
+            return None, False
+
+def display_data_overview(df):
+    """Display overview of the loaded data"""
+    st.markdown('<div class="section-header"><h2>📋 Data Overview</h2></div>', unsafe_allow_html=True)
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        st.metric("Total Experiments", len(df))
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        methods = df['tuning_method'].nunique() if 'tuning_method' in df.columns else 0
+        st.metric("Tuning Methods", methods)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        datasets = df['dataset'].nunique() if 'dataset' in df.columns else 0
+        st.metric("Datasets", datasets)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col4:
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        models = df['model'].nunique() if 'model' in df.columns else 0
+        st.metric("Models", models)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Data preview
+    with st.expander("🔍 Data Preview", expanded=False):
+        st.dataframe(df.head(10), use_container_width=True)
+    
+    # Column information
+    with st.expander("📊 Column Information", expanded=False):
+        col_info = pd.DataFrame({
+            'Column': df.columns,
+            'Data Type': df.dtypes.astype(str),
+            'Non-Null Count': df.count(),
+            'Null Count': df.isnull().sum()
+        })
+        st.dataframe(col_info, use_container_width=True)
+
+def display_basic_analysis(df):
+    """Display basic analysis plots - EXISTING SECTION 1"""
+    st.markdown('<div class="section-header"><h2>📈 Basic Performance Analysis</h2></div>', unsafe_allow_html=True)
+    
+    plots = create_plots(df)
+    
+    if plots:
+        # Create tabs for different plot types
+        plot_tabs = st.tabs(["Score Analysis", "Time Analysis", "Memory Analysis", "Efficiency", "Heatmap"])
+        
+        with plot_tabs[0]:
+            if 'score_vs_method' in plots:
+                st.plotly_chart(plots['score_vs_method'], use_container_width=True)
+            else:
+                st.warning("Score vs Method plot not available. Check if 'tuning_method' and 'best_score' columns exist.")
+        
+        with plot_tabs[1]:
+            if 'time_vs_method' in plots:
+                st.plotly_chart(plots['time_vs_method'], use_container_width=True)
+            else:
+                st.warning("Time analysis plot not available. Check if 'time_sec' column exists.")
+        
+        with plot_tabs[2]:
+            if 'memory_vs_method' in plots:
+                st.plotly_chart(plots['memory_vs_method'], use_container_width=True)
+            else:
+                st.warning("Memory analysis plot not available. Check if 'memory_bytes' column exists.")
+        
+        with plot_tabs[3]:
+            if 'score_vs_time' in plots:
+                st.plotly_chart(plots['score_vs_time'], use_container_width=True)
+            else:
+                st.warning("Efficiency plot not available.")
+        
+        with plot_tabs[4]:
+            if 'performance_heatmap' in plots:
+                st.plotly_chart(plots['performance_heatmap'], use_container_width=True)
+            else:
+                st.warning("Performance heatmap not available.")
+    else:
+        st.error("No plots could be generated. Please check your data format.")
+
+def display_statistical_analysis(df):
+    """Display statistical analysis - EXISTING SECTION 2"""
+    st.markdown('<div class="section-header"><h2>🔬 Statistical Analysis</h2></div>', unsafe_allow_html=True)
+    
+    # Metric selection
+    available_metrics = [col for col in df.columns if df[col].dtype in ['int64', 'float64']]
+    
+    if not available_metrics:
+        st.error("No numeric columns found for statistical analysis.")
+        return
+    
+    selected_metric = st.selectbox(
+        "Select metric for analysis:",
+        available_metrics,
+        index=available_metrics.index('best_score') if 'best_score' in available_metrics else 0
+    )
+    
+    alpha = st.slider("Significance level (α)", 0.01, 0.10, 0.05, 0.01)
+    
+    # Run statistical tests
+    statistical_results = run_statistical_tests(df, metric=selected_metric, alpha=alpha)
+    
+    if 'error' in statistical_results:
+        st.error(f"Statistical analysis failed: {statistical_results['error']}")
+        return
+    
+    # Display results in tabs
+    stats_tabs = st.tabs(["Overall Test", "Pairwise Comparisons", "Descriptive Stats", "Effect Sizes", "Normality Tests"])
+    
+    with stats_tabs[0]:
+        if 'overall_test' in statistical_results:
+            overall = statistical_results['overall_test']
+            if 'error' not in overall:
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Test Statistic", f"{overall['statistic']:.4f}")
+                    st.metric("P-value", f"{overall['p_value']:.6f}")
+                with col2:
+                    significance = "Significant" if overall['significant'] else "Not Significant"
+                    st.metric("Result", significance)
+                    st.info(overall['interpretation'])
+            else:
+                st.error(overall['error'])
+    
+    with stats_tabs[1]:
+        if 'pairwise_tests' in statistical_results:
+            pairwise_df = pd.DataFrame(statistical_results['pairwise_tests'])
+            if not pairwise_df.empty:
+                st.dataframe(pairwise_df, use_container_width=True)
+            else:
+                st.warning("No pairwise test results available.")
+    
+    with stats_tabs[2]:
+        if 'descriptive_stats' in statistical_results:
+            desc_df = pd.DataFrame(statistical_results['descriptive_stats']).T
+            st.dataframe(desc_df, use_container_width=True)
+    
+    with stats_tabs[3]:
+        if 'effect_sizes' in statistical_results:
+            effect_df = pd.DataFrame(statistical_results['effect_sizes'])
+            if not effect_df.empty:
+                st.dataframe(effect_df, use_container_width=True)
+            else:
+                st.warning("No effect size calculations available.")
+    
+    with stats_tabs[4]:
+        if 'normality_tests' in statistical_results:
+            normality_results = statistical_results['normality_tests']
+            for method, result in normality_results.items():
+                if 'error' not in result:
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.write(f"**{method}**")
+                    with col2:
+                        st.write(f"P-value: {result['p_value']:.6f}")
+                    with col3:
+                        normal_status = "✅ Normal" if result['normal'] else "❌ Not Normal"
+                        st.write(normal_status)
+                else:
+                    st.error(f"{method}: {result['error']}")
+
+def display_model_performance_analysis(df):
+    """Display model performance comparison - NEW SECTION 1"""
+    st.markdown('<div class="section-header"><h2>🤖 Model Performance Comparison</h2></div>', unsafe_allow_html=True)
+    
+    if 'model' not in df.columns:
+        st.warning("Model performance analysis requires a 'model' column in your data.")
+        return
+    
+    plots = create_model_performance_plots(df)
+    
+    if plots:
+        model_tabs = st.tabs(["Performance Overview", "By Dataset", "Efficiency Analysis"])
+        
+        with model_tabs[0]:
+            if 'model_performance' in plots:
+                st.plotly_chart(plots['model_performance'], use_container_width=True)
+                
+                # Model ranking table
+                if 'best_score' in df.columns:
+                    model_stats = df.groupby('model')['best_score'].agg(['mean', 'std', 'count']).round(4)
+                    model_stats = model_stats.sort_values('mean', ascending=False)
+                    st.subheader("📊 Model Performance Ranking")
+                    st.dataframe(model_stats, use_container_width=True)
+        
+        with model_tabs[1]:
+            if 'model_by_dataset' in plots:
+                st.plotly_chart(plots['model_by_dataset'], use_container_width=True)
+        
+        with model_tabs[2]:
+            if 'model_efficiency' in plots:
+                st.plotly_chart(plots['model_efficiency'], use_container_width=True)
+                
+                # Efficiency metrics
+                if all(col in df.columns for col in ['time_sec', 'best_score']):
+                    df_efficiency = df.copy()
+                    df_efficiency['score_per_second'] = df_efficiency['best_score'] / df_efficiency['time_sec']
+                    efficiency_stats = df_efficiency.groupby('model')['score_per_second'].agg(['mean', 'std']).round(6)
+                    efficiency_stats = efficiency_stats.sort_values('mean', ascending=False)
+                    st.subheader("⚡ Model Efficiency Ranking (Score/Time)")
+                    st.dataframe(efficiency_stats, use_container_width=True)
+
+def display_dataset_analysis(df):
+    """Display dataset-specific analysis - NEW SECTION 2"""
+    st.markdown('<div class="section-header"><h2>🗂️ Dataset Analysis</h2></div>', unsafe_allow_html=True)
+    
+    if 'dataset' not in df.columns:
+        st.warning("Dataset analysis requires a 'dataset' column in your data.")
+        return
+    
+    plots = create_dataset_analysis_plots(df)
+    
+    if plots:
+        dataset_tabs = st.tabs(["Difficulty Analysis", "Score Distributions", "Method Performance"])
+        
+        with dataset_tabs[0]:
+            if 'dataset_difficulty' in plots:
+                st.plotly_chart(plots['dataset_difficulty'], use_container_width=True)
+                st.info("💡 **Interpretation**: Datasets in the upper-right quadrant are more challenging (high variability), while those in the lower-left are more predictable.")
+        
+        with dataset_tabs[1]:
+            if 'dataset_distribution' in plots:
+                st.plotly_chart(plots['dataset_distribution'], use_container_width=True)
+        
+        with dataset_tabs[2]:
+            if 'dataset_method_heatmap' in plots:
+                st.plotly_chart(plots['dataset_method_heatmap'], use_container_width=True)
+                st.info("💡 **Interpretation**: Darker colors indicate better performance. Look for patterns where certain methods excel on specific datasets.")
+    
+    # Dataset statistics table
+    if 'best_score' in df.columns:
+        st.subheader("📈 Dataset Performance Statistics")
+        dataset_stats = df.groupby('dataset')['best_score'].agg([
+            'count', 'mean', 'std', 'min', 'max'
+        ]).round(4)
+        dataset_stats.columns = ['Experiments', 'Mean Score', 'Std Dev', 'Min Score', 'Max Score']
+        dataset_stats = dataset_stats.sort_values('Mean Score', ascending=False)
+        st.dataframe(dataset_stats, use_container_width=True)
+
+def display_resource_efficiency_analysis(df):
+    """Display resource efficiency analysis - NEW SECTION 3"""
+    st.markdown('<div class="section-header"><h2>⚡ Resource Efficiency Analysis</h2></div>', unsafe_allow_html=True)
+    
+    plots = create_resource_efficiency_plots(df)
+    
+    if plots:
+        efficiency_tabs = st.tabs(["Time Efficiency", "Memory Efficiency", "Cost-Benefit"])
+        
+        with efficiency_tabs[0]:
+            if 'score_time_efficiency' in plots:
+                st.plotly_chart(plots['score_time_efficiency'], use_container_width=True)
+                st.info("💡 **Interpretation**: Larger bubbles indicate better time efficiency (score/time ratio). Look for methods that achieve high scores quickly.")
+        
+        with efficiency_tabs[1]:
+            if 'score_memory_efficiency' in plots:
+                st.plotly_chart(plots['score_memory_efficiency'], use_container_width=True)
+                st.info("💡 **Interpretation**: Larger bubbles indicate better memory efficiency. Ideal methods achieve high scores with low memory usage.")
+        
+        with efficiency_tabs[2]:
+            if 'cost_benefit' in plots:
+                st.plotly_chart(plots['cost_benefit'], use_container_width=True)
+                st.info("💡 **Interpretation**: Higher bars indicate better cost-benefit ratios, considering both time and memory costs.")
+    
+    # Efficiency metrics table
+    if all(col in df.columns for col in ['time_sec', 'best_score']):
+        st.subheader("📊 Efficiency Metrics by Method")
+        
+        df_metrics = df.copy()
+        df_metrics['score_per_second'] = df_metrics['best_score'] / df_metrics['time_sec']
+        
+        if 'memory_bytes' in df.columns:
+            df_metrics['memory_mb'] = df_metrics['memory_bytes'] / (1024 * 1024)
+            df_metrics['score_per_mb'] = df_metrics['best_score'] / df_metrics['memory_mb']
+        
+        if 'tuning_method' in df.columns:
+            efficiency_cols = ['score_per_second']
+            if 'score_per_mb' in df_metrics.columns:
+                efficiency_cols.append('score_per_mb')
+            
+            efficiency_summary = df_metrics.groupby('tuning_method')[efficiency_cols].mean().round(6)
+            efficiency_summary = efficiency_summary.sort_values('score_per_second', ascending=False)
+            st.dataframe(efficiency_summary, use_container_width=True)
+
+def display_convergence_analysis(df):
+    """Display convergence analysis - NEW SECTION 4"""
+    st.markdown('<div class="section-header"><h2>🎯 Convergence Analysis</h2></div>', unsafe_allow_html=True)
+    
+    if 'evaluations_completed' not in df.columns:
+        st.warning("Convergence analysis requires an 'evaluations_completed' column in your data.")
+        return
+    
+    plots = create_convergence_analysis_plots(df)
+    
+    if plots:
+        convergence_tabs = st.tabs(["Convergence Patterns", "Efficiency", "Evaluation Speed"])
+        
+        with convergence_tabs[0]:
+            if 'convergence_by_method' in plots:
+                st.plotly_chart(plots['convergence_by_method'], use_container_width=True)
+                st.info("💡 **Interpretation**: Methods that reach higher scores with fewer evaluations are more efficient optimizers.")
+        
+        with convergence_tabs[1]:
+            if 'convergence_efficiency' in plots:
+                st.plotly_chart(plots['convergence_efficiency'], use_container_width=True)
+                st.info("💡 **Interpretation**: Higher values indicate better score improvement per evaluation.")
+        
+        with convergence_tabs[2]:
+            if 'evaluation_speed' in plots:
+                st.plotly_chart(plots['evaluation_speed'], use_container_width=True)
+                st.info("💡 **Interpretation**: Methods with higher evaluation speed can explore more parameter combinations in the same time.")
+    
+    # Convergence statistics
+    if all(col in df.columns for col in ['evaluations_completed', 'best_score', 'tuning_method']):
+        st.subheader("🎯 Convergence Statistics")
+        
+        df_conv = df.copy()
+        df_conv['score_per_eval'] = df_conv['best_score'] / df_conv['evaluations_completed']
+        
+        conv_stats = df_conv.groupby('tuning_method').agg({
+            'evaluations_completed': ['mean', 'std'],
+            'score_per_eval': ['mean', 'std']
+        }).round(4)
+        
+        conv_stats.columns = ['Avg Evaluations', 'Std Evaluations', 'Avg Score/Eval', 'Std Score/Eval']
+        conv_stats = conv_stats.sort_values('Avg Score/Eval', ascending=False)
+        st.dataframe(conv_stats, use_container_width=True)
+
+def display_statistical_deep_dive(df):
+    """Display statistical deep dive analysis - NEW SECTION 5"""
+    st.markdown('<div class="section-header"><h2>🔬 Statistical Deep Dive</h2></div>', unsafe_allow_html=True)
+    
+    if 'best_score' not in df.columns:
+        st.warning("Statistical deep dive requires a 'best_score' column in your data.")
+        return
+    
+    plots = create_statistical_deep_dive_plots(df)
+    
+    if plots:
+        stats_tabs = st.tabs(["Distributions", "Normality Assessment", "Outlier Detection"])
+        
+        with stats_tabs[0]:
+            if 'score_distributions' in plots:
+                st.plotly_chart(plots['score_distributions'], use_container_width=True)
+                st.info("💡 **Interpretation**: Compare the shape and spread of score distributions across different methods.")
+        
+        with stats_tabs[1]:
+            if 'qq_plots' in plots:
+                st.plotly_chart(plots['qq_plots'], use_container_width=True)
+                st.info("💡 **Interpretation**: Points following the diagonal line indicate normal distribution. Deviations suggest non-normality.")
+        
+        with stats_tabs[2]:
+            if 'outlier_detection' in plots:
+                st.plotly_chart(plots['outlier_detection'], use_container_width=True)
+                st.info("💡 **Interpretation**: Points beyond the whiskers are potential outliers that may warrant investigation.")
+    
+    # Advanced statistical tests
+    st.subheader("🧪 Advanced Statistical Tests")
+    
+    # Run comprehensive statistical analysis
+    statistical_results = run_statistical_tests(df, metric='best_score', alpha=0.05)
+    
+    if 'normality_tests' in statistical_results:
+        st.subheader("📊 Normality Test Results")
+        normality_data = []
+        for method, result in statistical_results['normality_tests'].items():
+            if 'error' not in result:
+                normality_data.append({
+                    'Method': method,
+                    'Test': result['test'],
+                    'Statistic': f"{result['statistic']:.4f}",
+                    'P-value': f"{result['p_value']:.6f}",
+                    'Normal Distribution': "✅ Yes" if result['normal'] else "❌ No"
+                })
+        
+        if normality_data:
+            normality_df = pd.DataFrame(normality_data)
+            st.dataframe(normality_df, use_container_width=True)
+    
+    # Distribution characteristics
+    if 'tuning_method' in df.columns:
+        st.subheader("📈 Distribution Characteristics")
+        
+        dist_chars = df.groupby('tuning_method')['best_score'].agg([
+            'count', 'mean', 'std', 'min', 'max', 'skew'
+        ]).round(4)
+        
+        # Add coefficient of variation
+        dist_chars['cv'] = (dist_chars['std'] / dist_chars['mean']).round(4)
+        dist_chars.columns = ['Count', 'Mean', 'Std Dev', 'Min', 'Max', 'Skewness', 'CV']
+        
+        st.dataframe(dist_chars, use_container_width=True)
+        st.info("💡 **CV (Coefficient of Variation)**: Lower values indicate more consistent performance.")
+
+def display_export_reporting(df, is_sample_data):
+    """Display export and reporting options - NEW SECTION 6"""
+    st.markdown('<div class="section-header"><h2>📤 Export & Reporting</h2></div>', unsafe_allow_html=True)
+    
+    export_tabs = st.tabs(["Quick Export", "Custom Reports", "Analysis Summary"])
+    
+    with export_tabs[0]:
+        st.subheader("📋 Quick Export Options")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # CSV export
+            if st.button("📄 Export Raw Data (CSV)", use_container_width=True):
+                csv_data = export_to_csv(df)
+                st.download_button(
+                    label="Download CSV",
+                    data=csv_data,
+                    file_name=f"experiment_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+        
+        with col2:
+            # Excel export
+            if st.button("📊 Export Analysis Report (Excel)", use_container_width=True):
+                summary_report = generate_summary_report(df)
+                statistical_results = run_statistical_tests(df)
+                
+                excel_buffer = export_to_excel(df, summary_report, statistical_results)
+                
+                st.download_button(
+                    label="Download Excel Report",
+                    data=excel_buffer.getvalue(),
+                    file_name=f"analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        
+        # HTML plots export
+        if st.button("🌐 Export All Plots (HTML)", use_container_width=True):
+            all_plots = {}
+            
+            # Collect all plots
+            all_plots.update(create_plots(df))
+            all_plots.update(create_model_performance_plots(df))
+            all_plots.update(create_dataset_analysis_plots(df))
+            all_plots.update(create_resource_efficiency_plots(df))
+            all_plots.update(create_convergence_analysis_plots(df))
+            all_plots.update(create_statistical_deep_dive_plots(df))
+            
+            html_content = export_plots_to_html(all_plots)
+            
+            st.download_button(
+                label="Download HTML Report",
+                data=html_content,
+                file_name=f"plots_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
+                mime="text/html"
+            )
+    
+    with export_tabs[1]:
+        st.subheader("🎯 Custom Report Builder")
+        
+        # Section selection
+        available_sections = [
+            'summary', 'statistical_tests', 'basic_plots', 
+            'model_performance', 'dataset_analysis', 'resource_efficiency',
+            'convergence_analysis', 'statistical_deep_dive'
+        ]
+        
+        section_labels = {
+            'summary': '📋 Summary Statistics',
+            'statistical_tests': '🔬 Statistical Tests',
+            'basic_plots': '📈 Basic Performance Plots',
+            'model_performance': '🤖 Model Performance Analysis',
+            'dataset_analysis': '🗂️ Dataset Analysis',
+            'resource_efficiency': '⚡ Resource Efficiency',
+            'convergence_analysis': '🎯 Convergence Analysis',
+            'statistical_deep_dive': '🔬 Statistical Deep Dive'
+        }
+        
+        selected_sections = st.multiselect(
+            "Select sections to include in your custom report:",
+            available_sections,
+            default=['summary', 'statistical_tests', 'basic_plots'],
+            format_func=lambda x: section_labels[x]
+        )
+        
+        report_title = st.text_input(
+            "Report Title:",
+            value="Custom Experiment Analysis Report"
+        )
+        
+        if st.button("🔧 Generate Custom Report", use_container_width=True):
+            if selected_sections:
+                custom_report = generate_custom_report(df, selected_sections, report_title)
+                
+                # Convert to JSON for download
+                json_data = export_summary_to_json(
+                    custom_report.get('sections', {}),
+                    custom_report
+                )
+                
+                st.download_button(
+                    label="Download Custom Report (JSON)",
+                    data=json_data,
+                    file_name=f"custom_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    mime="application/json"
+                )
+                
+                st.success("✅ Custom report generated successfully!")
+            else:
+                st.warning("Please select at least one section for the custom report.")
+    
+    with export_tabs[2]:
+        st.subheader("📊 Analysis Summary")
+        
+        # Generate comprehensive summary
+        summary_report = generate_summary_report(df)
+        
+        if 'error' not in summary_report:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.metric("Total Experiments", summary_report.get('total_experiments', 0))
+                st.metric("Datasets Analyzed", summary_report.get('datasets', 0))
+                st.metric("Models Tested", summary_report.get('models', 0))
+                st.metric("Tuning Methods", summary_report.get('methods', 0))
+            
+            with col2:
+                if 'score_stats' in summary_report:
+                    score_stats = summary_report['score_stats']
+                    st.metric("Average Score", f"{score_stats['mean']:.4f}")
+                    st.metric("Best Score", f"{score_stats['max']:.4f}")
+                    st.metric("Score Range", f"{score_stats['max'] - score_stats['min']:.4f}")
+                
+                if 'time_stats' in summary_report:
+                    time_stats = summary_report['time_stats']
+                    st.metric("Average Time (sec)", f"{time_stats['mean']:.2f}")
+            
+            # Best combinations
+            if 'best_combinations' in summary_report:
+                st.subheader("🏆 Top Performing Combinations")
+                best_df = pd.DataFrame(summary_report['best_combinations'])
+                st.dataframe(best_df, use_container_width=True)
+            
+            # Method performance summary
+            if 'method_performance' in summary_report:
+                st.subheader("📈 Method Performance Summary")
+                method_df = pd.DataFrame(summary_report['method_performance']).T
+                method_df = method_df.sort_values('mean', ascending=False)
+                st.dataframe(method_df, use_container_width=True)
+        else:
+            st.error(f"Error generating summary: {summary_report['error']}")
+        
+        # Data quality assessment
+        st.subheader("🔍 Data Quality Assessment")
+        
+        quality_metrics = []
+        
+        # Missing data analysis
+        missing_data = df.isnull().sum()
+        total_missing = missing_data.sum()
+        missing_percentage = (total_missing / (len(df) * len(df.columns))) * 100
+        
+        quality_metrics.append({
+            'Metric': 'Missing Data',
+            'Value': f"{total_missing} cells ({missing_percentage:.2f}%)",
+            'Status': '✅ Good' if missing_percentage < 5 else '⚠️ Fair' if missing_percentage < 15 else '❌ Poor'
+        })
+        
+        # Duplicate analysis (exclude unhashable columns like dicts)
+        hashable_cols = [col for col in df.columns if col != 'best_params' and not df[col].apply(lambda x: isinstance(x, (dict, list))).any()]
+        if hashable_cols:
+            duplicates = df[hashable_cols].duplicated().sum()
+            duplicate_percentage = (duplicates / len(df)) * 100
+        else:
+            duplicates = 0
+            duplicate_percentage = 0
+        
+        quality_metrics.append({
+            'Metric': 'Duplicate Records',
+            'Value': f"{duplicates} records ({duplicate_percentage:.2f}%)",
+            'Status': '✅ Good' if duplicate_percentage < 1 else '⚠️ Fair' if duplicate_percentage < 5 else '❌ Poor'
+        })
+        
+        # Data completeness
+        complete_records = len(df.dropna())
+        completeness = (complete_records / len(df)) * 100
+        
+        quality_metrics.append({
+            'Metric': 'Data Completeness',
+            'Value': f"{complete_records}/{len(df)} records ({completeness:.2f}%)",
+            'Status': '✅ Good' if completeness > 90 else '⚠️ Fair' if completeness > 75 else '❌ Poor'
+        })
+        
+        quality_df = pd.DataFrame(quality_metrics)
+        st.dataframe(quality_df, use_container_width=True)
+
+def display_performance_thresholds(df):
+    """Display performance threshold analysis - NEW SECTION 7"""
+    st.markdown('<div class="section-header"><h2>🎯 Performance Thresholds & Benchmarks</h2></div>', unsafe_allow_html=True)
+    
+    st.markdown("""
+    Define custom thresholds to identify top and bottom performers in your experiments.
+    This helps you quickly classify and analyze your results based on your specific criteria.
+    """)
+    
+    if 'best_score' not in df.columns:
+        st.warning("Performance threshold analysis requires a 'best_score' column in your data.")
+        return
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("⚙️ Threshold Configuration")
+        
+        # Top performer threshold
+        top_threshold = st.slider(
+            "Top Performers Threshold (percentile):",
+            0, 100, 75,
+            help="Experiments above this percentile are classified as top performers"
+        )
+        
+        # Bottom performer threshold
+        bottom_threshold = st.slider(
+            "Bottom Performers Threshold (percentile):",
+            0, 100, 25,
+            help="Experiments below this percentile are classified as bottom performers"
+        )
+        
+        # Custom score threshold
+        use_custom_score = st.checkbox("Use Custom Score Threshold")
+        if use_custom_score:
+            custom_score = st.number_input(
+                "Minimum Acceptable Score:",
+                min_value=float(df['best_score'].min()),
+                max_value=float(df['best_score'].max()),
+                value=float(df['best_score'].quantile(0.5)),
+                step=0.01
+            )
+        
+        # Time threshold
+        if 'time_sec' in df.columns:
+            use_time_threshold = st.checkbox("Use Time Threshold")
+            if use_time_threshold:
+                max_time = st.number_input(
+                    "Maximum Acceptable Time (seconds):",
+                    min_value=float(df['time_sec'].min()),
+                    max_value=float(df['time_sec'].max()),
+                    value=float(df['time_sec'].quantile(0.75)),
+                    step=1.0
+                )
+    
+    with col2:
+        st.subheader("📊 Threshold Analysis")
+        
+        # Calculate thresholds
+        top_score_threshold = df['best_score'].quantile(top_threshold / 100)
+        bottom_score_threshold = df['best_score'].quantile(bottom_threshold / 100)
+        
+        # Classify experiments
+        df_classified = df.copy()
+        df_classified['performance_class'] = 'Average'
+        df_classified.loc[df_classified['best_score'] >= top_score_threshold, 'performance_class'] = 'Top Performer'
+        df_classified.loc[df_classified['best_score'] <= bottom_score_threshold, 'performance_class'] = 'Bottom Performer'
+        
+        # Apply custom thresholds if enabled
+        if use_custom_score:
+            df_classified.loc[df_classified['best_score'] < custom_score, 'performance_class'] = 'Below Threshold'
+        
+        if 'time_sec' in df.columns and use_time_threshold:
+            df_classified.loc[df_classified['time_sec'] > max_time, 'performance_class'] = 'Time Exceeded'
+        
+        # Show classification distribution
+        class_counts = df_classified['performance_class'].value_counts()
+        
+        fig = px.pie(
+            values=class_counts.values,
+            names=class_counts.index,
+            title='Experiment Classification Distribution',
+            color_discrete_sequence=px.colors.qualitative.Set3
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Detailed breakdown
+    st.subheader("📋 Detailed Classification Breakdown")
+    
+    tabs = st.tabs(["Top Performers", "Bottom Performers", "All Classifications"])
+    
+    with tabs[0]:
+        top_performers = df_classified[df_classified['performance_class'] == 'Top Performer']
+        if not top_performers.empty:
+            st.dataframe(top_performers.sort_values('best_score', ascending=False), use_container_width=True)
+            
+            # Top performer insights
+            if 'tuning_method' in top_performers.columns:
+                st.subheader("🏆 Top Performer Insights")
+                method_counts = top_performers['tuning_method'].value_counts()
+                st.bar_chart(method_counts)
+        else:
+            st.info("No top performers identified with current thresholds.")
+    
+    with tabs[1]:
+        bottom_performers = df_classified[df_classified['performance_class'] == 'Bottom Performer']
+        if not bottom_performers.empty:
+            st.dataframe(bottom_performers.sort_values('best_score'), use_container_width=True)
+            
+            # Bottom performer insights
+            if 'tuning_method' in bottom_performers.columns:
+                st.subheader("⚠️ Bottom Performer Insights")
+                method_counts = bottom_performers['tuning_method'].value_counts()
+                st.bar_chart(method_counts)
+        else:
+            st.info("No bottom performers identified with current thresholds.")
+    
+    with tabs[2]:
+        st.dataframe(df_classified.sort_values('best_score', ascending=False), use_container_width=True)
+        
+        # Download classified data
+        csv_data = df_classified.to_csv(index=False)
+        st.download_button(
+            label="📥 Download Classified Results",
+            data=csv_data,
+            file_name=f"classified_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv"
+        )
+
+def display_predictive_analytics(df):
+    """Display predictive analytics - NEW SECTION 8"""
+    st.markdown('<div class="section-header"><h2>🔮 Predictive Analytics</h2></div>', unsafe_allow_html=True)
+    
+    st.markdown("""
+    Estimate resource requirements and performance for new experiments based on historical data.
+    Use machine learning models trained on your past experiments to make informed predictions.
+    """)
+    
+    if not all(col in df.columns for col in ['best_score', 'time_sec']):
+        st.warning("Predictive analytics requires 'best_score' and 'time_sec' columns in your data.")
+        return
+    
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.subheader("📝 New Experiment Configuration")
+        
+        # Input parameters for prediction
+        if 'tuning_method' in df.columns:
+            selected_method = st.selectbox(
+                "Select Tuning Method:",
+                df['tuning_method'].unique()
+            )
+        
+        if 'dataset' in df.columns:
+            selected_dataset = st.selectbox(
+                "Select Dataset:",
+                df['dataset'].unique()
+            )
+        
+        if 'model' in df.columns:
+            selected_model = st.selectbox(
+                "Select Model:",
+                df['model'].unique()
+            )
+        
+        if 'evaluations_completed' in df.columns:
+            estimated_evaluations = st.number_input(
+                "Estimated Evaluations:",
+                min_value=10,
+                max_value=10000,
+                value=100,
+                step=10
+            )
+    
+    with col2:
+        st.subheader("🎯 Predicted Outcomes")
+        
+        # Filter similar experiments
+        similar_experiments = df.copy()
+        
+        if 'tuning_method' in df.columns:
+            similar_experiments = similar_experiments[similar_experiments['tuning_method'] == selected_method]
+        if 'dataset' in df.columns:
+            similar_experiments = similar_experiments[similar_experiments['dataset'] == selected_dataset]
+        if 'model' in df.columns:
+            similar_experiments = similar_experiments[similar_experiments['model'] == selected_model]
+        
+        if len(similar_experiments) > 0:
+            # Predict score
+            predicted_score = similar_experiments['best_score'].mean()
+            score_std = similar_experiments['best_score'].std()
+            score_lower = predicted_score - 1.96 * score_std
+            score_upper = predicted_score + 1.96 * score_std
+            
+            st.metric(
+                "Predicted Score",
+                f"{predicted_score:.4f}",
+                delta=f"±{1.96 * score_std:.4f} (95% CI)"
+            )
+            
+            # Predict time
+            if 'evaluations_completed' in df.columns and 'evaluations_completed' in similar_experiments.columns:
+                # Linear regression for time prediction
+                avg_time_per_eval = (similar_experiments['time_sec'] / similar_experiments['evaluations_completed']).mean()
+                predicted_time = avg_time_per_eval * estimated_evaluations
+                
+                st.metric(
+                    "Predicted Time (seconds)",
+                    f"{predicted_time:.2f}",
+                    delta=f"~{predicted_time/60:.1f} minutes"
+                )
+            else:
+                predicted_time = similar_experiments['time_sec'].mean()
+                st.metric("Predicted Time (seconds)", f"{predicted_time:.2f}")
+            
+            # Predict memory
+            if 'memory_bytes' in similar_experiments.columns:
+                predicted_memory = similar_experiments['memory_bytes'].mean()
+                predicted_memory_mb = predicted_memory / (1024 * 1024)
+                st.metric("Predicted Memory (MB)", f"{predicted_memory_mb:.2f}")
+            
+            # Confidence metrics
+            st.subheader("📊 Prediction Confidence")
+            st.info(f"""
+            **Sample Size**: {len(similar_experiments)} similar experiments
+            **Score Range**: {score_lower:.4f} - {score_upper:.4f}
+            **Confidence**: {'High' if len(similar_experiments) >= 10 else 'Medium' if len(similar_experiments) >= 5 else 'Low'}
+            """)
+        else:
+            st.warning("No similar experiments found in historical data. Try different parameters.")
+    
+    # Visualization
+    st.subheader("📈 Historical Performance Trends")
+    
+    if len(similar_experiments) > 0:
+        trend_tabs = st.tabs(["Score Distribution", "Time vs Evaluations", "Performance Scatter"])
+        
+        with trend_tabs[0]:
+            fig = px.histogram(
+                similar_experiments,
+                x='best_score',
+                title=f'Score Distribution for {selected_method} on {selected_dataset}',
+                nbins=20
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with trend_tabs[1]:
+            if 'evaluations_completed' in similar_experiments.columns:
+                fig = px.scatter(
+                    similar_experiments,
+                    x='evaluations_completed',
+                    y='time_sec',
+                    trendline='ols',
+                    title='Time vs Evaluations Trend'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+        
+        with trend_tabs[2]:
+            fig = px.scatter(
+                similar_experiments,
+                x='time_sec',
+                y='best_score',
+                size='evaluations_completed' if 'evaluations_completed' in similar_experiments.columns else None,
+                title='Performance vs Time Trade-off'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+def display_recommendations(df):
+    """Display automated recommendations - NEW SECTION 9"""
+    st.markdown('<div class="section-header"><h2>💡 Automated Recommendations</h2></div>', unsafe_allow_html=True)
+    
+    st.markdown("""
+    AI-powered recommendations based on comprehensive analysis of your experiment results.
+    Get actionable insights to improve your hyperparameter tuning workflow.
+    """)
+    
+    recommendations = []
+    
+    # Analyze best performing method
+    if 'tuning_method' in df.columns and 'best_score' in df.columns:
+        method_performance = df.groupby('tuning_method')['best_score'].agg(['mean', 'std', 'count']).round(4)
+        best_method = method_performance['mean'].idxmax()
+        best_score = method_performance.loc[best_method, 'mean']
+        
+        recommendations.append({
+            'category': '🏆 Best Method',
+            'title': f'Use {best_method} for Optimal Performance',
+            'description': f'{best_method} achieved the highest average score of {best_score:.4f} across all experiments.',
+            'priority': 'High',
+            'impact': 'Performance'
+        })
+    
+    # Analyze efficiency
+    if all(col in df.columns for col in ['time_sec', 'best_score', 'tuning_method']):
+        df_efficiency = df.copy()
+        df_efficiency['efficiency'] = df_efficiency['best_score'] / df_efficiency['time_sec']
+        efficiency_by_method = df_efficiency.groupby('tuning_method')['efficiency'].mean()
+        most_efficient = efficiency_by_method.idxmax()
+        
+        recommendations.append({
+            'category': '⚡ Efficiency',
+            'title': f'{most_efficient} Offers Best Time Efficiency',
+            'description': f'{most_efficient} provides the best score-to-time ratio, making it ideal for time-constrained scenarios.',
+            'priority': 'Medium',
+            'impact': 'Speed'
+        })
+    
+    # Analyze dataset-specific patterns
+    if all(col in df.columns for col in ['dataset', 'tuning_method', 'best_score']):
+        for dataset in df['dataset'].unique()[:3]:
+            dataset_df = df[df['dataset'] == dataset]
+            best_for_dataset = dataset_df.groupby('tuning_method')['best_score'].mean().idxmax()
+            
+            recommendations.append({
+                'category': '🗂️ Dataset-Specific',
+                'title': f'For {dataset}, Use {best_for_dataset}',
+                'description': f'{best_for_dataset} performs best on the {dataset} dataset based on historical results.',
+                'priority': 'Medium',
+                'impact': 'Accuracy'
+            })
+    
+    # Analyze resource usage
+    if 'memory_bytes' in df.columns and 'tuning_method' in df.columns:
+        memory_by_method = df.groupby('tuning_method')['memory_bytes'].mean()
+        low_memory_method = memory_by_method.idxmin()
+        memory_mb = memory_by_method[low_memory_method] / (1024 * 1024)
+        
+        recommendations.append({
+            'category': '💾 Resource Optimization',
+            'title': f'{low_memory_method} is Most Memory Efficient',
+            'description': f'{low_memory_method} uses only {memory_mb:.2f} MB on average, ideal for resource-constrained environments.',
+            'priority': 'Low',
+            'impact': 'Resources'
+        })
+    
+    # Convergence recommendations
+    if all(col in df.columns for col in ['evaluations_completed', 'best_score', 'tuning_method']):
+        df_conv = df.copy()
+        df_conv['score_per_eval'] = df_conv['best_score'] / df_conv['evaluations_completed']
+        best_convergence = df_conv.groupby('tuning_method')['score_per_eval'].mean().idxmax()
+        
+        recommendations.append({
+            'category': '🎯 Convergence',
+            'title': f'{best_convergence} Converges Most Efficiently',
+            'description': f'{best_convergence} achieves better scores with fewer evaluations, reducing computational overhead.',
+            'priority': 'Medium',
+            'impact': 'Efficiency'
+        })
+    
+    # Statistical significance recommendations
+    statistical_results = run_statistical_tests(df, metric='best_score', alpha=0.05)
+    if 'overall_test' in statistical_results and 'significant' in statistical_results['overall_test']:
+        if statistical_results['overall_test']['significant']:
+            recommendations.append({
+                'category': '🔬 Statistical Insight',
+                'title': 'Significant Differences Detected',
+                'description': 'Statistical tests confirm significant performance differences between methods. Your choice of tuning method matters!',
+                'priority': 'High',
+                'impact': 'Validation'
+            })
+        else:
+            recommendations.append({
+                'category': '🔬 Statistical Insight',
+                'title': 'No Significant Differences Found',
+                'description': 'Methods perform similarly. Consider choosing based on speed or resource efficiency instead.',
+                'priority': 'Medium',
+                'impact': 'Decision Making'
+            })
+    
+    # Display recommendations
+    st.subheader("📋 Prioritized Recommendations")
+    
+    # Filter by priority
+    priority_filter = st.multiselect(
+        "Filter by Priority:",
+        ['High', 'Medium', 'Low'],
+        default=['High', 'Medium', 'Low']
+    )
+    
+    filtered_recommendations = [r for r in recommendations if r['priority'] in priority_filter]
+    
+    for i, rec in enumerate(filtered_recommendations):
+        with st.expander(f"{rec['category']}: {rec['title']}", expanded=(i < 3)):
+            st.markdown(f"**Description:** {rec['description']}")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                priority_color = {'High': '🔴', 'Medium': '🟡', 'Low': '🟢'}
+                st.markdown(f"**Priority:** {priority_color[rec['priority']]} {rec['priority']}")
+            with col2:
+                st.markdown(f"**Impact Area:** {rec['impact']}")
+    
+    # Action plan
+    st.subheader("🎯 Recommended Action Plan")
+    
+    action_plan = []
+    
+    if len(filtered_recommendations) > 0:
+        high_priority = [r for r in filtered_recommendations if r['priority'] == 'High']
+        
+        if high_priority:
+            st.markdown("### Immediate Actions")
+            for rec in high_priority:
+                st.markdown(f"1. ✅ {rec['title']}")
+                action_plan.append(rec['title'])
+        
+        medium_priority = [r for r in filtered_recommendations if r['priority'] == 'Medium']
+        if medium_priority:
+            st.markdown("### Short-term Improvements")
+            for rec in medium_priority[:3]:
+                st.markdown(f"- 📌 {rec['title']}")
+                action_plan.append(rec['title'])
+    
+    # Export recommendations
+    if action_plan:
+        recommendations_text = "# Experiment Analysis Recommendations\n\n"
+        recommendations_text += f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        
+        for i, action in enumerate(action_plan, 1):
+            recommendations_text += f"{i}. {action}\n"
+        
+        st.download_button(
+            label="📥 Download Recommendations",
+            data=recommendations_text,
+            file_name=f"recommendations_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+            mime="text/plain"
+        )
+
+def display_timeline_analysis(df):
+    """Display timeline analysis - NEW SECTION 10"""
+    st.markdown('<div class="section-header"><h2>📅 Timeline & Trend Analysis</h2></div>', unsafe_allow_html=True)
+    
+    st.markdown("""
+    Track performance improvements and trends over time. Analyze how your experiments evolve
+    and identify patterns in your hyperparameter tuning workflow.
+    """)
+    
+    if 'timestamp' not in df.columns:
+        st.warning("Timeline analysis requires a 'timestamp' column in your data.")
+        return
+    
+    # Ensure timestamp is datetime
+    df_timeline = df.copy()
+    df_timeline['timestamp'] = pd.to_datetime(df_timeline['timestamp'])
+    df_timeline = df_timeline.sort_values('timestamp')
+    
+    # Add temporal features
+    df_timeline['date'] = df_timeline['timestamp'].dt.date
+    df_timeline['week'] = df_timeline['timestamp'].dt.isocalendar().week
+    df_timeline['month'] = df_timeline['timestamp'].dt.to_period('M').astype(str)
+    
+    # Time range selector
+    col1, col2 = st.columns(2)
+    with col1:
+        time_grouping = st.selectbox(
+            "Group by:",
+            ['Daily', 'Weekly', 'Monthly'],
+            index=0
+        )
+    
+    with col2:
+        if 'best_score' in df_timeline.columns:
+            metric_to_track = st.selectbox(
+                "Metric to track:",
+                ['best_score', 'time_sec', 'memory_bytes'] if 'memory_bytes' in df_timeline.columns else ['best_score', 'time_sec'],
+                index=0
+            )
+    
+    # Aggregate data based on time grouping
+    if time_grouping == 'Daily':
+        time_col = 'date'
+        df_timeline['time_group'] = df_timeline['date']
+    elif time_grouping == 'Weekly':
+        time_col = 'week'
+        df_timeline['time_group'] = df_timeline['week']
+    else:
+        time_col = 'month'
+        df_timeline['time_group'] = df_timeline['month']
+    
+    # Create timeline visualizations
+    timeline_tabs = st.tabs(["Performance Trend", "Method Comparison", "Improvement Rate", "Experiment Volume"])
+    
+    with timeline_tabs[0]:
+        st.subheader(f"{metric_to_track.replace('_', ' ').title()} Over Time")
+        
+        # Aggregate by time period
+        trend_data = df_timeline.groupby('time_group')[metric_to_track].agg(['mean', 'min', 'max', 'count']).reset_index()
+        
+        fig = go.Figure()
+        
+        fig.add_trace(go.Scatter(
+            x=trend_data['time_group'],
+            y=trend_data['mean'],
+            mode='lines+markers',
+            name='Average',
+            line=dict(color='blue', width=3)
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=trend_data['time_group'],
+            y=trend_data['max'],
+            mode='lines',
+            name='Max',
+            line=dict(color='green', dash='dash')
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=trend_data['time_group'],
+            y=trend_data['min'],
+            mode='lines',
+            name='Min',
+            line=dict(color='red', dash='dash')
+        ))
+        
+        fig.update_layout(
+            title=f'{metric_to_track.replace("_", " ").title()} Trends',
+            xaxis_title=time_grouping,
+            yaxis_title=metric_to_track.replace('_', ' ').title(),
+            height=400
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Show trend statistics
+        if len(trend_data) > 1:
+            initial_avg = trend_data['mean'].iloc[0]
+            final_avg = trend_data['mean'].iloc[-1]
+            improvement = ((final_avg - initial_avg) / initial_avg) * 100 if initial_avg != 0 else 0
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Initial Average", f"{initial_avg:.4f}")
+            with col2:
+                st.metric("Current Average", f"{final_avg:.4f}")
+            with col3:
+                st.metric("Improvement", f"{improvement:+.2f}%")
+    
+    with timeline_tabs[1]:
+        st.subheader("Method Performance Over Time")
+        
+        if 'tuning_method' in df_timeline.columns and 'best_score' in df_timeline.columns:
+            method_timeline = df_timeline.groupby(['time_group', 'tuning_method'])['best_score'].mean().reset_index()
+            
+            fig = px.line(
+                method_timeline,
+                x='time_group',
+                y='best_score',
+                color='tuning_method',
+                title='Method Performance Comparison Over Time',
+                markers=True
+            )
+            
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with timeline_tabs[2]:
+        st.subheader("Performance Improvement Rate")
+        
+        if 'best_score' in df_timeline.columns:
+            # Calculate rolling average
+            df_timeline['rolling_avg'] = df_timeline['best_score'].rolling(window=5, min_periods=1).mean()
+            
+            fig = go.Figure()
+            
+            fig.add_trace(go.Scatter(
+                x=df_timeline['timestamp'],
+                y=df_timeline['best_score'],
+                mode='markers',
+                name='Individual Experiments',
+                marker=dict(size=5, opacity=0.5)
+            ))
+            
+            fig.add_trace(go.Scatter(
+                x=df_timeline['timestamp'],
+                y=df_timeline['rolling_avg'],
+                mode='lines',
+                name='5-Experiment Moving Average',
+                line=dict(color='red', width=3)
+            ))
+            
+            fig.update_layout(
+                title='Score Improvement with Moving Average',
+                xaxis_title='Time',
+                yaxis_title='Best Score',
+                height=400
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with timeline_tabs[3]:
+        st.subheader("Experiment Volume Over Time")
+        
+        volume_data = df_timeline.groupby('time_group').size().reset_index(name='count')
+        
+        fig = px.bar(
+            volume_data,
+            x='time_group',
+            y='count',
+            title='Number of Experiments per Period',
+            labels={'count': 'Experiment Count'}
+        )
+        
+        fig.update_layout(height=400)
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Activity metrics
+        total_experiments = len(df_timeline)
+        time_periods = df_timeline['time_group'].nunique()
+        avg_per_period = total_experiments / time_periods if time_periods > 0 else 0
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Experiments", total_experiments)
+        with col2:
+            st.metric("Time Periods", time_periods)
+        with col3:
+            st.metric("Avg per Period", f"{avg_per_period:.1f}")
+
+def main():
+    """Main application function"""
+    st.title("🔬 Advanced Experiment Analysis Dashboard")
+    st.markdown("Comprehensive analysis platform for hyperparameter tuning experiments with advanced statistical insights.")
+    
+    # Initialize session state for filters
+    if 'filter_active' not in st.session_state:
+        st.session_state.filter_active = False
+    
+    # Sidebar
+    st.sidebar.title("🔧 Navigation")
+    
+    # Load data
+    df, is_sample_data = load_data()
+    
+    if df is None:
+        st.stop()
+    
+    # Store original dataframe
+    df_original = df.copy()
+    
+    # Navigation menu
+    sections = [
+        "📋 Data Overview",
+        "📈 Basic Analysis",
+        "🔬 Statistical Analysis", 
+        "🤖 Model Performance",
+        "🗂️ Dataset Analysis",
+        "⚡ Resource Efficiency",
+        "🎯 Convergence Analysis",
+        "🧪 Statistical Deep Dive",
+        "📤 Export & Reporting",
+        "🎯 Performance Thresholds",
+        "🔮 Predictive Analytics",
+        "💡 Recommendations",
+        "📅 Timeline Analysis"
+    ]
+    
+    selected_section = st.sidebar.selectbox("Select Analysis Section:", sections)
+    
+    # Display warning for sample data
+    if is_sample_data:
+        st.sidebar.info("📊 Currently using sample data for demonstration. Upload your own CSV file for real analysis.")
+    
+    # Enhanced data filters in sidebar with toggle
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🔍 Interactive Filters")
+    
+    filter_enabled = st.sidebar.checkbox("Enable Filtering", value=False, key="enable_filters")
+    
+    if filter_enabled:
+        st.session_state.filter_active = True
+        
+        # Method filter
+        if 'tuning_method' in df.columns:
+            methods = list(df['tuning_method'].unique())
+            selected_methods = st.sidebar.multiselect(
+                "Filter by Tuning Method:",
+                methods,
+                default=methods
+            )
+            
+            if selected_methods:
+                df = df[df['tuning_method'].isin(selected_methods)]
+        
+        # Dataset filter
+        if 'dataset' in df.columns:
+            datasets = list(df['dataset'].unique())
+            selected_datasets = st.sidebar.multiselect(
+                "Filter by Dataset:",
+                datasets,
+                default=datasets
+            )
+            
+            if selected_datasets:
+                df = df[df['dataset'].isin(selected_datasets)]
+        
+        # Model filter
+        if 'model' in df.columns:
+            models = list(df['model'].unique())
+            selected_models = st.sidebar.multiselect(
+                "Filter by Model:",
+                models,
+                default=models
+            )
+            
+            if selected_models:
+                df = df[df['model'].isin(selected_models)]
+        
+        # Score range filter
+        if 'best_score' in df.columns:
+            min_score = float(df['best_score'].min())
+            max_score = float(df['best_score'].max())
+            score_range = st.sidebar.slider(
+                "Score Range:",
+                min_score, max_score, (min_score, max_score),
+                step=0.01
+            )
+            df = df[(df['best_score'] >= score_range[0]) & (df['best_score'] <= score_range[1])]
+        
+        # Time range filter
+        if 'time_sec' in df.columns:
+            min_time = float(df['time_sec'].min())
+            max_time = float(df['time_sec'].max())
+            time_range = st.sidebar.slider(
+                "Time Range (seconds):",
+                min_time, max_time, (min_time, max_time),
+                step=1.0
+            )
+            df = df[(df['time_sec'] >= time_range[0]) & (df['time_sec'] <= time_range[1])]
+        
+        # Resource mode filter
+        if 'resource_mode' in df.columns:
+            resource_modes = list(df['resource_mode'].unique())
+            selected_modes = st.sidebar.multiselect(
+                "Filter by Resource Mode:",
+                resource_modes,
+                default=resource_modes
+            )
+            
+            if selected_modes:
+                df = df[df['resource_mode'].isin(selected_modes)]
+        
+        # Show filter summary
+        filtered_count = len(df)
+        total_count = len(df_original)
+        st.sidebar.success(f"✅ Showing {filtered_count} of {total_count} experiments")
+        
+        if st.sidebar.button("🔄 Reset All Filters"):
+            st.session_state.filter_active = False
+            st.rerun()
+    else:
+        st.session_state.filter_active = False
+    
+    # Display selected section
+    if selected_section == "📋 Data Overview":
+        display_data_overview(df)
+    elif selected_section == "📈 Basic Analysis":
+        display_basic_analysis(df)
+    elif selected_section == "🔬 Statistical Analysis":
+        display_statistical_analysis(df)
+    elif selected_section == "🤖 Model Performance":
+        display_model_performance_analysis(df)
+    elif selected_section == "🗂️ Dataset Analysis":
+        display_dataset_analysis(df)
+    elif selected_section == "⚡ Resource Efficiency":
+        display_resource_efficiency_analysis(df)
+    elif selected_section == "🎯 Convergence Analysis":
+        display_convergence_analysis(df)
+    elif selected_section == "🧪 Statistical Deep Dive":
+        display_statistical_deep_dive(df)
+    elif selected_section == "📤 Export & Reporting":
+        display_export_reporting(df, is_sample_data)
+    elif selected_section == "🎯 Performance Thresholds":
+        display_performance_thresholds(df)
+    elif selected_section == "🔮 Predictive Analytics":
+        display_predictive_analytics(df)
+    elif selected_section == "💡 Recommendations":
+        display_recommendations(df)
+    elif selected_section == "📅 Timeline Analysis":
+        display_timeline_analysis(df)
+    
+    # Footer
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📊 Dashboard Info")
+    st.sidebar.info(f"""
+    **Current Data**: {len(df)} experiments
+    **Last Updated**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+    **Status**: {'Sample Data' if is_sample_data else 'User Data'}
+    """)
+
+if __name__ == "__main__":
+    main()
+
+
+
+"""
+Analysis and visualization utilities for experiment results.
+Provides statistical analysis and plotting functions.
+"""
+
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from scipy import stats
+from scipy.stats import kruskal, mannwhitneyu, friedmanchisquare, normaltest, shapiro
+import itertools
+import seaborn as sns
+import matplotlib.pyplot as plt
+from io import BytesIO
+
+def create_plots(df):
+    """
+    Create visualization plots from experiment results
+    
+    Args:
+        df: DataFrame containing experiment results
+        
+    Returns:
+        dict: Dictionary of plotly figures
+    """
+    plots = {}
+    
+    try:
+        # Score vs Method plot
+        if 'tuning_method' in df.columns and 'best_score' in df.columns:
+            fig = px.box(
+                df, 
+                x='tuning_method', 
+                y='best_score',
+                title='Best Score by Tuning Method',
+                points='all'
+            )
+            fig.update_layout(
+                xaxis_title="Tuning Method",
+                yaxis_title="Best Score",
+                height=400
+            )
+            plots['score_vs_method'] = fig
+        
+        # Time vs Method plot
+        if 'tuning_method' in df.columns and 'time_sec' in df.columns:
+            fig = px.box(
+                df,
+                x='tuning_method',
+                y='time_sec',
+                title='Execution Time by Tuning Method',
+                points='all'
+            )
+            fig.update_layout(
+                xaxis_title="Tuning Method",
+                yaxis_title="Time (seconds)",
+                height=400
+            )
+            plots['time_vs_method'] = fig
+        
+        # Memory vs Method plot
+        if 'tuning_method' in df.columns and 'memory_bytes' in df.columns:
+            # Convert to MB for better readability
+            df_memory = df.copy()
+            df_memory['memory_mb'] = df_memory['memory_bytes'] / (1024 * 1024)
+            
+            fig = px.box(
+                df_memory,
+                x='tuning_method',
+                y='memory_mb',
+                title='Memory Usage by Tuning Method',
+                points='all'
+            )
+            fig.update_layout(
+                xaxis_title="Tuning Method",
+                yaxis_title="Memory (MB)",
+                height=400
+            )
+            plots['memory_vs_method'] = fig
+        
+        # Score vs Time scatter plot
+        if 'time_sec' in df.columns and 'best_score' in df.columns:
+            fig = px.scatter(
+                df,
+                x='time_sec',
+                y='best_score',
+                color='tuning_method' if 'tuning_method' in df.columns else None,
+                size='evaluations_completed' if 'evaluations_completed' in df.columns else None,
+                hover_data=['dataset', 'model'] if all(col in df.columns for col in ['dataset', 'model']) else None,
+                title='Score vs Time Trade-off'
+            )
+            fig.update_layout(
+                xaxis_title="Time (seconds)",
+                yaxis_title="Best Score",
+                height=400
+            )
+            plots['score_vs_time'] = fig
+        
+        # Performance heatmap by dataset and method
+        if all(col in df.columns for col in ['dataset', 'tuning_method', 'best_score']):
+            pivot_df = df.pivot_table(
+                values='best_score',
+                index='dataset',
+                columns='tuning_method',
+                aggfunc='mean'
+            )
+            
+            if not pivot_df.empty:
+                fig = px.imshow(
+                    pivot_df.values,
+                    x=pivot_df.columns,
+                    y=pivot_df.index,
+                    aspect='auto',
+                    title='Average Score by Dataset and Method',
+                    color_continuous_scale='Viridis'
+                )
+                fig.update_layout(height=400)
+                plots['performance_heatmap'] = fig
+    
+    except Exception as e:
+        print(f"Error creating plots: {e}")
+    
+    return plots
+
+def create_model_performance_plots(df):
+    """Create model-specific performance analysis plots"""
+    plots = {}
+    
+    try:
+        if 'model' not in df.columns or 'best_score' not in df.columns:
+            return plots
+        
+        # Model performance comparison
+        fig = px.box(
+            df,
+            x='model',
+            y='best_score',
+            title='Performance Comparison Across Models',
+            points='all'
+        )
+        fig.update_layout(
+            xaxis_title="Model",
+            yaxis_title="Best Score",
+            height=400,
+            xaxis_tickangle=-45
+        )
+        plots['model_performance'] = fig
+        
+        # Model performance by dataset
+        if 'dataset' in df.columns:
+            fig = px.box(
+                df,
+                x='dataset',
+                y='best_score',
+                color='model',
+                title='Model Performance by Dataset'
+            )
+            fig.update_layout(
+                xaxis_title="Dataset",
+                yaxis_title="Best Score",
+                height=500,
+                xaxis_tickangle=-45
+            )
+            plots['model_by_dataset'] = fig
+        
+        # Model efficiency (score vs time)
+        if 'time_sec' in df.columns:
+            fig = px.scatter(
+                df,
+                x='time_sec',
+                y='best_score',
+                color='model',
+                size='evaluations_completed' if 'evaluations_completed' in df.columns else None,
+                title='Model Efficiency: Score vs Time'
+            )
+            fig.update_layout(
+                xaxis_title="Time (seconds)",
+                yaxis_title="Best Score",
+                height=400
+            )
+            plots['model_efficiency'] = fig
+    
+    except Exception as e:
+        print(f"Error creating model performance plots: {e}")
+    
+    return plots
+
+def create_dataset_analysis_plots(df):
+    """Create dataset-specific analysis plots"""
+    plots = {}
+    
+    try:
+        if 'dataset' not in df.columns or 'best_score' not in df.columns:
+            return plots
+        
+        # Dataset difficulty analysis
+        dataset_stats = df.groupby('dataset')['best_score'].agg(['mean', 'std', 'count']).reset_index()
+        
+        fig = px.scatter(
+            dataset_stats,
+            x='mean',
+            y='std',
+            size='count',
+            hover_data=['dataset'],
+            title='Dataset Difficulty Analysis (Mean vs Variability)',
+            labels={'mean': 'Average Score', 'std': 'Score Variability'}
+        )
+        fig.update_layout(height=400)
+        plots['dataset_difficulty'] = fig
+        
+        # Performance distribution by dataset
+        fig = px.violin(
+            df,
+            x='dataset',
+            y='best_score',
+            title='Score Distribution by Dataset'
+        )
+        fig.update_layout(
+            xaxis_title="Dataset",
+            yaxis_title="Best Score",
+            height=400,
+            xaxis_tickangle=-45
+        )
+        plots['dataset_distribution'] = fig
+        
+        # Dataset performance ranking
+        if 'tuning_method' in df.columns:
+            pivot_df = df.pivot_table(
+                values='best_score',
+                index='dataset',
+                columns='tuning_method',
+                aggfunc='mean'
+            )
+            
+            if not pivot_df.empty:
+                fig = px.imshow(
+                    pivot_df.values,
+                    x=pivot_df.columns,
+                    y=pivot_df.index,
+                    aspect='auto',
+                    title='Method Performance Across Datasets',
+                    color_continuous_scale='RdYlBu_r'
+                )
+                fig.update_layout(height=500)
+                plots['dataset_method_heatmap'] = fig
+    
+    except Exception as e:
+        print(f"Error creating dataset analysis plots: {e}")
+    
+    return plots
+
+def create_resource_efficiency_plots(df):
+    """Create resource efficiency analysis plots"""
+    plots = {}
+    
+    try:
+        # Score vs Time efficiency
+        if 'time_sec' in df.columns and 'best_score' in df.columns:
+            df_copy = df.copy()
+            df_copy['efficiency_score_time'] = df_copy['best_score'] / df_copy['time_sec']
+            
+            fig = px.scatter(
+                df_copy,
+                x='time_sec',
+                y='best_score',
+                color='tuning_method' if 'tuning_method' in df.columns else None,
+                size='efficiency_score_time',
+                title='Score vs Time Efficiency Analysis',
+                hover_data=['efficiency_score_time']
+            )
+            fig.update_layout(
+                xaxis_title="Time (seconds)",
+                yaxis_title="Best Score",
+                height=400
+            )
+            plots['score_time_efficiency'] = fig
+        
+        # Memory efficiency
+        if 'memory_bytes' in df.columns and 'best_score' in df.columns:
+            df_copy = df.copy()
+            df_copy['memory_mb'] = df_copy['memory_bytes'] / (1024 * 1024)
+            df_copy['efficiency_score_memory'] = df_copy['best_score'] / df_copy['memory_mb']
+            
+            fig = px.scatter(
+                df_copy,
+                x='memory_mb',
+                y='best_score',
+                color='tuning_method' if 'tuning_method' in df.columns else None,
+                size='efficiency_score_memory',
+                title='Score vs Memory Efficiency Analysis'
+            )
+            fig.update_layout(
+                xaxis_title="Memory (MB)",
+                yaxis_title="Best Score",
+                height=400
+            )
+            plots['score_memory_efficiency'] = fig
+        
+        # Cost-benefit analysis
+        if all(col in df.columns for col in ['time_sec', 'memory_bytes', 'best_score', 'tuning_method']):
+            df_copy = df.copy()
+            df_copy['memory_mb'] = df_copy['memory_bytes'] / (1024 * 1024)
+            df_copy['total_cost'] = df_copy['time_sec'] + df_copy['memory_mb'] * 0.1  # Weighted cost
+            df_copy['benefit_cost_ratio'] = df_copy['best_score'] / df_copy['total_cost']
+            
+            fig = px.bar(
+                df_copy.groupby('tuning_method')['benefit_cost_ratio'].mean().reset_index(),
+                x='tuning_method',
+                y='benefit_cost_ratio',
+                title='Cost-Benefit Analysis by Method'
+            )
+            fig.update_layout(
+                xaxis_title="Tuning Method",
+                yaxis_title="Benefit/Cost Ratio",
+                height=400
+            )
+            plots['cost_benefit'] = fig
+    
+    except Exception as e:
+        print(f"Error creating resource efficiency plots: {e}")
+    
+    return plots
+
+def create_convergence_analysis_plots(df):
+    """Create convergence analysis plots"""
+    plots = {}
+    
+    try:
+        if 'evaluations_completed' not in df.columns or 'best_score' not in df.columns:
+            return plots
+        
+        # Convergence by method
+        if 'tuning_method' in df.columns:
+            fig = px.scatter(
+                df,
+                x='evaluations_completed',
+                y='best_score',
+                color='tuning_method',
+                title='Convergence Analysis: Score vs Evaluations'
+            )
+            fig.update_layout(
+                xaxis_title="Evaluations Completed",
+                yaxis_title="Best Score",
+                height=400
+            )
+            plots['convergence_by_method'] = fig
+        
+        # Convergence efficiency
+        df_copy = df.copy()
+        df_copy['score_per_evaluation'] = df_copy['best_score'] / df_copy['evaluations_completed']
+        
+        if 'tuning_method' in df.columns:
+            fig = px.box(
+                df_copy,
+                x='tuning_method',
+                y='score_per_evaluation',
+                title='Convergence Efficiency by Method'
+            )
+            fig.update_layout(
+                xaxis_title="Tuning Method",
+                yaxis_title="Score per Evaluation",
+                height=400
+            )
+            plots['convergence_efficiency'] = fig
+        
+        # Evaluation vs time relationship
+        if 'time_sec' in df.columns:
+            df_copy['evaluations_per_second'] = df_copy['evaluations_completed'] / df_copy['time_sec']
+            
+            if 'tuning_method' in df.columns:
+                fig = px.box(
+                    df_copy,
+                    x='tuning_method',
+                    y='evaluations_per_second',
+                    title='Evaluation Speed by Method'
+                )
+                fig.update_layout(
+                    xaxis_title="Tuning Method",
+                    yaxis_title="Evaluations per Second",
+                    height=400
+                )
+                plots['evaluation_speed'] = fig
+    
+    except Exception as e:
+        print(f"Error creating convergence analysis plots: {e}")
+    
+    return plots
+
+def create_statistical_deep_dive_plots(df):
+    """Create statistical deep dive plots"""
+    plots = {}
+    
+    try:
+        if 'best_score' not in df.columns:
+            return plots
+        
+        # Distribution plots for each method
+        if 'tuning_method' in df.columns:
+            methods = df['tuning_method'].unique()
+            
+            # Create subplots for distributions
+            fig = make_subplots(
+                rows=len(methods),
+                cols=1,
+                subplot_titles=[f'{method} Distribution' for method in methods]
+            )
+            
+            for i, method in enumerate(methods):
+                method_data = df[df['tuning_method'] == method]['best_score']
+                fig.add_trace(
+                    go.Histogram(x=method_data, name=method, showlegend=False),
+                    row=i+1, col=1
+                )
+            
+            fig.update_layout(
+                title='Score Distributions by Method',
+                height=200 * len(methods)
+            )
+            plots['score_distributions'] = fig
+        
+        # Q-Q plots for normality assessment
+        if 'tuning_method' in df.columns:
+            methods = df['tuning_method'].unique()
+            
+            fig = make_subplots(
+                rows=1,
+                cols=len(methods),
+                subplot_titles=[f'{method} Q-Q Plot' for method in methods]
+            )
+            
+            for i, method in enumerate(methods):
+                method_data = df[df['tuning_method'] == method]['best_score'].dropna()
+                if len(method_data) > 3:
+                    # Calculate theoretical quantiles
+                    theoretical_quantiles = stats.norm.ppf(np.linspace(0.01, 0.99, len(method_data)))
+                    sample_quantiles = np.sort(method_data)
+                    
+                    fig.add_trace(
+                        go.Scatter(
+                            x=theoretical_quantiles,
+                            y=sample_quantiles,
+                            mode='markers',
+                            name=method,
+                            showlegend=False
+                        ),
+                        row=1, col=i+1
+                    )
+                    
+                    # Add reference line
+                    min_val, max_val = min(theoretical_quantiles), max(theoretical_quantiles)
+                    fig.add_trace(
+                        go.Scatter(
+                            x=[min_val, max_val],
+                            y=[min_val, max_val],
+                            mode='lines',
+                            name='Reference',
+                            showlegend=False,
+                            line=dict(dash='dash', color='red')
+                        ),
+                        row=1, col=i+1
+                    )
+            
+            fig.update_layout(
+                title='Q-Q Plots for Normality Assessment',
+                height=400
+            )
+            plots['qq_plots'] = fig
+        
+        # Box plot with outlier detection
+        if 'tuning_method' in df.columns:
+            fig = px.box(
+                df,
+                x='tuning_method',
+                y='best_score',
+                title='Box Plots with Outlier Detection',
+                points='outliers'
+            )
+            fig.update_layout(
+                xaxis_title="Tuning Method",
+                yaxis_title="Best Score",
+                height=400
+            )
+            plots['outlier_detection'] = fig
+    
+    except Exception as e:
+        print(f"Error creating statistical deep dive plots: {e}")
+    
+    return plots
+
+def run_statistical_tests(df, metric='best_score', alpha=0.05):
+    """
+    Run statistical tests on experiment results
+    
+    Args:
+        df: DataFrame containing experiment results
+        metric: Column name of the metric to test
+        alpha: Significance level
+        
+    Returns:
+        dict: Statistical test results
+    """
+    results = {}
+    
+    try:
+        if metric not in df.columns or 'tuning_method' not in df.columns:
+            return {'error': f'Required columns not found: {metric}, tuning_method'}
+        
+        # Group data by tuning method
+        groups = {}
+        for method in df['tuning_method'].unique():
+            method_data = df[df['tuning_method'] == method][metric].dropna()
+            if len(method_data) > 0:
+                groups[method] = method_data.values
+        
+        if len(groups) < 2:
+            return {'error': 'Need at least 2 tuning methods for comparison'}
+        
+        # Overall test - Kruskal-Wallis (non-parametric ANOVA)
+        group_values = list(groups.values())
+        if len(group_values) >= 2 and all(len(group) > 0 for group in group_values):
+            try:
+                h_stat, p_value = kruskal(*group_values)
+                results['overall_test'] = {
+                    'test_name': 'Kruskal-Wallis H-test',
+                    'statistic': h_stat,
+                    'p_value': p_value,
+                    'significant': p_value < alpha,
+                    'interpretation': f'{"Significant" if p_value < alpha else "No significant"} difference between methods'
+                }
+            except Exception as e:
+                results['overall_test'] = {'error': f'Kruskal-Wallis test failed: {str(e)}'}
+        
+        # Pairwise tests - Mann-Whitney U test
+        pairwise_results = []
+        method_names = list(groups.keys())
+        
+        for i, method1 in enumerate(method_names):
+            for j, method2 in enumerate(method_names[i+1:], i+1):
+                try:
+                    group1 = groups[method1]
+                    group2 = groups[method2]
+                    
+                    if len(group1) > 0 and len(group2) > 0:
+                        u_stat, p_value = mannwhitneyu(
+                            group1, group2, 
+                            alternative='two-sided'
+                        )
+                        
+                        pairwise_results.append({
+                            'comparison': f'{method1} vs {method2}',
+                            'statistic': u_stat,
+                            'p_value': p_value,
+                            'significant': p_value < alpha
+                        })
+                except Exception as e:
+                    pairwise_results.append({
+                        'comparison': f'{method1} vs {method2}',
+                        'error': str(e)
+                    })
+        
+        results['pairwise_tests'] = pairwise_results
+        
+        # Descriptive statistics
+        descriptive_stats = {}
+        for method, values in groups.items():
+            if len(values) > 0:
+                descriptive_stats[method] = {
+                    'mean': np.mean(values),
+                    'std': np.std(values, ddof=1) if len(values) > 1 else 0,
+                    'median': np.median(values),
+                    'min': np.min(values),
+                    'max': np.max(values),
+                    'count': len(values)
+                }
+        
+        results['descriptive_stats'] = descriptive_stats
+        
+        # Effect sizes (Cohen's d for pairwise comparisons)
+        effect_sizes = []
+        for i, method1 in enumerate(method_names):
+            for j, method2 in enumerate(method_names[i+1:], i+1):
+                try:
+                    group1 = groups[method1]
+                    group2 = groups[method2]
+                    
+                    if len(group1) > 1 and len(group2) > 1:
+                        # Calculate Cohen's d
+                        mean1, mean2 = np.mean(group1), np.mean(group2)
+                        std1, std2 = np.std(group1, ddof=1), np.std(group2, ddof=1)
+                        
+                        # Pooled standard deviation
+                        pooled_std = np.sqrt(((len(group1) - 1) * std1**2 + (len(group2) - 1) * std2**2) / 
+                                           (len(group1) + len(group2) - 2))
+                        
+                        if pooled_std > 0:
+                            cohens_d = (mean1 - mean2) / pooled_std
+                            
+                            # Interpret effect size
+                            if abs(cohens_d) < 0.2:
+                                interpretation = "negligible"
+                            elif abs(cohens_d) < 0.5:
+                                interpretation = "small"
+                            elif abs(cohens_d) < 0.8:
+                                interpretation = "medium"
+                            else:
+                                interpretation = "large"
+                            
+                            effect_sizes.append({
+                                'comparison': f'{method1} vs {method2}',
+                                'cohens_d': cohens_d,
+                                'interpretation': interpretation
+                            })
+                except Exception as e:
+                    continue
+        
+        results['effect_sizes'] = effect_sizes
+        
+        # Normality tests
+        normality_results = {}
+        for method, values in groups.items():
+            if len(values) >= 8:  # Minimum for normality tests
+                try:
+                    # Shapiro-Wilk test (better for smaller samples)
+                    if len(values) <= 5000:
+                        shapiro_stat, shapiro_p = shapiro(values)
+                        normality_results[method] = {
+                            'test': 'Shapiro-Wilk',
+                            'statistic': shapiro_stat,
+                            'p_value': shapiro_p,
+                            'normal': shapiro_p > alpha
+                        }
+                    else:
+                        # D'Agostino's normality test (better for larger samples)
+                        dagostino_stat, dagostino_p = normaltest(values)
+                        normality_results[method] = {
+                            'test': "D'Agostino",
+                            'statistic': dagostino_stat,
+                            'p_value': dagostino_p,
+                            'normal': dagostino_p > alpha
+                        }
+                except Exception as e:
+                    normality_results[method] = {'error': str(e)}
+        
+        results['normality_tests'] = normality_results
+        
+    except Exception as e:
+        results['error'] = f'Statistical analysis failed: {str(e)}'
+    
+    return results
+
+def generate_summary_report(df):
+    """
+    Generate a comprehensive summary report
+    
+    Args:
+        df: DataFrame containing experiment results
+        
+    Returns:
+        dict: Summary report data
+    """
+    report = {}
+    
+    try:
+        # Basic statistics
+        report['total_experiments'] = len(df)
+        report['datasets'] = df['dataset'].nunique() if 'dataset' in df.columns else 0
+        report['models'] = df['model'].nunique() if 'model' in df.columns else 0
+        report['methods'] = df['tuning_method'].nunique() if 'tuning_method' in df.columns else 0
+        
+        # Performance statistics
+        if 'best_score' in df.columns:
+            report['score_stats'] = {
+                'mean': df['best_score'].mean(),
+                'std': df['best_score'].std(),
+                'min': df['best_score'].min(),
+                'max': df['best_score'].max()
+            }
+        
+        if 'time_sec' in df.columns:
+            report['time_stats'] = {
+                'mean': df['time_sec'].mean(),
+                'std': df['time_sec'].std(),
+                'min': df['time_sec'].min(),
+                'max': df['time_sec'].max()
+            }
+        
+        # Best performing combinations
+        if all(col in df.columns for col in ['dataset', 'model', 'tuning_method', 'best_score']):
+            best_combinations = df.nlargest(5, 'best_score')[
+                ['dataset', 'model', 'tuning_method', 'best_score', 'time_sec']
+            ].to_dict('records')
+            report['best_combinations'] = best_combinations
+        
+        # Method performance ranking
+        if 'tuning_method' in df.columns and 'best_score' in df.columns:
+            method_performance = df.groupby('tuning_method')['best_score'].agg([
+                'mean', 'std', 'count'
+            ]).round(4).to_dict('index')
+            report['method_performance'] = method_performance
+        
+    except Exception as e:
+        report['error'] = f'Report generation failed: {str(e)}'
+    
+    return report
+
+def compare_resource_modes(df):
+    """
+    Compare performance between normal and edge resource modes
+    
+    Args:
+        df: DataFrame containing experiment results
+        
+    Returns:
+        dict: Comparison results
+    """
+    comparison = {}
+    
+    try:
+        if 'resource_mode' not in df.columns:
+            return {'error': 'resource_mode column not found'}
+        
+        normal_df = df[df['resource_mode'] == 'normal']
+        edge_df = df[df['resource_mode'] == 'edge']
+        
+        if len(normal_df) == 0 or len(edge_df) == 0:
+            return {'error': 'Need experiments in both normal and edge modes'}
+        
+        # Compare metrics
+        metrics = ['best_score', 'time_sec', 'memory_bytes']
+        
+        for metric in metrics:
+            if metric in df.columns:
+                normal_values = normal_df[metric].dropna()
+                edge_values = edge_df[metric].dropna()
+                
+                if len(normal_values) > 0 and len(edge_values) > 0:
+                    # Statistical test
+                    try:
+                        u_stat, p_value = mannwhitneyu(normal_values, edge_values, alternative='two-sided')
+                        comparison[f'{metric}_comparison'] = {
+                            'normal_mean': normal_values.mean(),
+                            'edge_mean': edge_values.mean(),
+                            'statistic': u_stat,
+                            'p_value': p_value,
+                            'significant': p_value < 0.05
+                        }
+                    except Exception as e:
+                        comparison[f'{metric}_comparison'] = {'error': str(e)}
+        
+    except Exception as e:
+        comparison['error'] = f'Resource mode comparison failed: {str(e)}'
+    
+    return comparison
+
+"""
+Export utilities for experiment analysis results.
+"""
+
+import pandas as pd
+import json
+from io import BytesIO, StringIO
+import plotly.graph_objects as go
+import plotly.io as pio
+from datetime import datetime
+
+def export_to_excel(df, summary_report, statistical_results):
+    """
+    Export analysis results to Excel format
+    
+    Args:
+        df: DataFrame containing experiment results
+        summary_report: Summary report dictionary
+        statistical_results: Statistical test results dictionary
+        
+    Returns:
+        BytesIO: Excel file in memory
+    """
+    output = BytesIO()
+    
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        # Raw data
+        df.to_excel(writer, sheet_name='Raw Data', index=False)
+        
+        # Summary statistics
+        if 'descriptive_stats' in statistical_results:
+            stats_df = pd.DataFrame(statistical_results['descriptive_stats']).T
+            stats_df.to_excel(writer, sheet_name='Descriptive Statistics')
+        
+        # Pairwise comparisons
+        if 'pairwise_tests' in statistical_results:
+            pairwise_df = pd.DataFrame(statistical_results['pairwise_tests'])
+            pairwise_df.to_excel(writer, sheet_name='Pairwise Tests', index=False)
+        
+        # Effect sizes
+        if 'effect_sizes' in statistical_results:
+            effect_df = pd.DataFrame(statistical_results['effect_sizes'])
+            effect_df.to_excel(writer, sheet_name='Effect Sizes', index=False)
+        
+        # Best combinations
+        if 'best_combinations' in summary_report:
+            best_df = pd.DataFrame(summary_report['best_combinations'])
+            best_df.to_excel(writer, sheet_name='Best Combinations', index=False)
+        
+        # Method performance
+        if 'method_performance' in summary_report:
+            method_df = pd.DataFrame(summary_report['method_performance']).T
+            method_df.to_excel(writer, sheet_name='Method Performance')
+    
+    output.seek(0)
+    return output
+
+def export_to_csv(df):
+    """
+    Export DataFrame to CSV format
+    
+    Args:
+        df: DataFrame to export
+        
+    Returns:
+        str: CSV data as string
+    """
+    return df.to_csv(index=False)
+
+def export_plots_to_html(plots_dict):
+    """
+    Export all plots to HTML format
+    
+    Args:
+        plots_dict: Dictionary of plotly figures
+        
+    Returns:
+        str: HTML content with all plots
+    """
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Experiment Analysis Plots - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</title>
+        <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 20px; }}
+            .plot-container {{ margin: 30px 0; }}
+            .plot-title {{ font-size: 18px; font-weight: bold; margin-bottom: 10px; }}
+        </style>
+    </head>
+    <body>
+        <h1>Experiment Analysis Report</h1>
+        <p>Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+    """
+    
+    for plot_name, fig in plots_dict.items():
+        if fig is not None:
+            plot_html = pio.to_html(fig, include_plotlyjs=False, div_id=f"plot_{plot_name}")
+            html_content += f"""
+            <div class="plot-container">
+                <div class="plot-title">{plot_name.replace('_', ' ').title()}</div>
+                {plot_html}
+            </div>
+            """
+    
+    html_content += """
+    </body>
+    </html>
+    """
+    
+    return html_content
+
+def export_summary_to_json(summary_report, statistical_results):
+    """
+    Export summary and statistical results to JSON
+    
+    Args:
+        summary_report: Summary report dictionary
+        statistical_results: Statistical test results dictionary
+        
+    Returns:
+        str: JSON formatted string
+    """
+    export_data = {
+        'timestamp': datetime.now().isoformat(),
+        'summary_report': summary_report,
+        'statistical_results': statistical_results
+    }
+    
+    return json.dumps(export_data, indent=2, default=str)
+
+def generate_custom_report(df, sections, title="Custom Analysis Report"):
+    """
+    Generate a custom report with selected sections
+    
+    Args:
+        df: DataFrame containing experiment results
+        sections: List of section names to include
+        title: Report title
+        
+    Returns:
+        dict: Custom report data
+    """
+    from analysis_utils import (
+        generate_summary_report, 
+        run_statistical_tests,
+        create_plots,
+        create_model_performance_plots,
+        create_dataset_analysis_plots,
+        create_resource_efficiency_plots,
+        create_convergence_analysis_plots,
+        create_statistical_deep_dive_plots
+    )
+    
+    report = {
+        'title': title,
+        'timestamp': datetime.now().isoformat(),
+        'sections': {}
+    }
+    
+    if 'summary' in sections:
+        report['sections']['summary'] = generate_summary_report(df)
+    
+    if 'statistical_tests' in sections:
+        report['sections']['statistical_tests'] = run_statistical_tests(df)
+    
+    if 'basic_plots' in sections:
+        report['sections']['basic_plots'] = create_plots(df)
+    
+    if 'model_performance' in sections:
+        report['sections']['model_performance'] = create_model_performance_plots(df)
+    
+    if 'dataset_analysis' in sections:
+        report['sections']['dataset_analysis'] = create_dataset_analysis_plots(df)
+    
+    if 'resource_efficiency' in sections:
+        report['sections']['resource_efficiency'] = create_resource_efficiency_plots(df)
+    
+    if 'convergence_analysis' in sections:
+        report['sections']['convergence_analysis'] = create_convergence_analysis_plots(df)
+    
+    if 'statistical_deep_dive' in sections:
+        report['sections']['statistical_deep_dive'] = create_statistical_deep_dive_plots(df)
+    
+    return report
+
+"""
+Sample data generator for experiment analysis demonstration.
+Only used when no real data is uploaded.
+"""
+
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+
+def create_sample_data():
+    """
+    Create sample experiment data for demonstration purposes.
+    This function generates realistic experiment data with various methods, models, and datasets.
+    """
+    np.random.seed(42)  # For reproducible results
+    
+    # Define experiment parameters
+    datasets = ['iris', 'wine', 'digits', 'breast_cancer', 'diabetes']
+    models = ['RandomForest', 'SVM', 'GradientBoosting', 'LogisticRegression', 'XGBoost']
+    tuning_methods = ['GridSearch', 'RandomSearch', 'BayesianOpt', 'Optuna', 'Hyperopt']
+    resource_modes = ['normal', 'edge']
+    
+    # Generate experiments
+    experiments = []
+    experiment_id = 1
+    
+    for dataset in datasets:
+        for model in models:
+            for method in tuning_methods:
+                for mode in resource_modes:
+                    # Generate multiple runs for each combination
+                    n_runs = np.random.randint(3, 8)  # 3-7 runs per combination
+                    
+                    for run in range(n_runs):
+                        # Base performance varies by dataset difficulty
+                        dataset_difficulty = {
+                            'iris': 0.95, 'wine': 0.92, 'digits': 0.88, 
+                            'breast_cancer': 0.90, 'diabetes': 0.75
+                        }
+                        base_score = dataset_difficulty[dataset]
+                        
+                        # Method effectiveness varies
+                        method_effectiveness = {
+                            'GridSearch': 0.98, 'RandomSearch': 0.94, 'BayesianOpt': 0.96,
+                            'Optuna': 0.97, 'Hyperopt': 0.95
+                        }
+                        
+                        # Model performance varies
+                        model_performance = {
+                            'RandomForest': 0.96, 'SVM': 0.94, 'GradientBoosting': 0.97,
+                            'LogisticRegression': 0.90, 'XGBoost': 0.98
+                        }
+                        
+                        # Calculate final score with some randomness
+                        score = (base_score * method_effectiveness[method] * 
+                                model_performance[model] + np.random.normal(0, 0.02))
+                        score = max(0.5, min(1.0, score))  # Clamp between 0.5 and 1.0
+                        
+                        # Resource mode affects performance and resources
+                        if mode == 'edge':
+                            score *= 0.95  # Slightly lower performance in edge mode
+                            time_multiplier = 1.3  # Slower in edge mode
+                            memory_multiplier = 0.7  # Less memory available
+                        else:
+                            time_multiplier = 1.0
+                            memory_multiplier = 1.0
+                        
+                        # Generate time based on method and dataset
+                        base_time = {
+                            'GridSearch': 300, 'RandomSearch': 180, 'BayesianOpt': 240,
+                            'Optuna': 200, 'Hyperopt': 220
+                        }[method]
+                        
+                        dataset_time_factor = {
+                            'iris': 0.5, 'wine': 0.7, 'digits': 2.0, 
+                            'breast_cancer': 1.0, 'diabetes': 1.5
+                        }[dataset]
+                        
+                        time_sec = (base_time * dataset_time_factor * time_multiplier * 
+                                   np.random.uniform(0.7, 1.3))
+                        
+                        # Generate memory usage
+                        base_memory = np.random.uniform(50, 500) * 1024 * 1024  # 50-500 MB
+                        memory_bytes = base_memory * memory_multiplier * np.random.uniform(0.8, 1.2)
+                        
+                        # Generate evaluations completed
+                        base_evaluations = {
+                            'GridSearch': np.random.randint(50, 200),
+                            'RandomSearch': np.random.randint(100, 500),
+                            'BayesianOpt': np.random.randint(30, 150),
+                            'Optuna': np.random.randint(50, 300),
+                            'Hyperopt': np.random.randint(40, 200)
+                        }[method]
+                        
+                        evaluations = int(base_evaluations * np.random.uniform(0.7, 1.3))
+                        
+                        # Best parameters (simulated)
+                        best_params = generate_sample_params(model)
+                        
+                        experiment = {
+                            'experiment_id': experiment_id,
+                            'dataset': dataset,
+                            'model': model,
+                            'tuning_method': method,
+                            'resource_mode': mode,
+                            'best_score': round(score, 4),
+                            'time_sec': round(time_sec, 2),
+                            'memory_bytes': int(memory_bytes),
+                            'evaluations_completed': evaluations,
+                            'best_params': best_params,
+                            'timestamp': datetime.now() - timedelta(
+                                days=np.random.randint(0, 30),
+                                hours=np.random.randint(0, 24),
+                                minutes=np.random.randint(0, 60)
+                            )
+                        }
+                        
+                        experiments.append(experiment)
+                        experiment_id += 1
+    
+    return pd.DataFrame(experiments)
+
+def generate_sample_params(model):
+    """Generate sample hyperparameters for different models"""
+    if model == 'RandomForest':
+        return {
+            'n_estimators': np.random.choice([50, 100, 200]),
+            'max_depth': np.random.choice([3, 5, 7, None]),
+            'min_samples_split': np.random.choice([2, 5, 10]),
+            'min_samples_leaf': np.random.choice([1, 2, 4])
+        }
+    elif model == 'SVM':
+        return {
+            'C': np.random.choice([0.1, 1.0, 10.0]),
+            'kernel': np.random.choice(['rbf', 'linear', 'poly']),
+            'gamma': np.random.choice(['scale', 'auto', 0.001, 0.01])
+        }
+    elif model == 'GradientBoosting':
+        return {
+            'n_estimators': np.random.choice([50, 100, 200]),
+            'learning_rate': np.random.choice([0.01, 0.1, 0.2]),
+            'max_depth': np.random.choice([3, 5, 7]),
+            'subsample': np.random.choice([0.8, 0.9, 1.0])
+        }
+    elif model == 'LogisticRegression':
+        return {
+            'C': np.random.choice([0.1, 1.0, 10.0]),
+            'penalty': np.random.choice(['l1', 'l2']),
+            'solver': np.random.choice(['liblinear', 'lbfgs'])
+        }
+    elif model == 'XGBoost':
+        return {
+            'n_estimators': np.random.choice([50, 100, 200]),
+            'learning_rate': np.random.choice([0.01, 0.1, 0.3]),
+            'max_depth': np.random.choice([3, 6, 9]),
+            'subsample': np.random.choice([0.8, 0.9, 1.0]),
+            'colsample_bytree': np.random.choice([0.8, 0.9, 1.0])
+        }
+    else:
+        return {}

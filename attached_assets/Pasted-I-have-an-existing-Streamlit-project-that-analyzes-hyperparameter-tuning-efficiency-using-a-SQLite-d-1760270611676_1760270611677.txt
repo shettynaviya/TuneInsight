@@ -1,0 +1,94 @@
+I have an existing Streamlit project that analyzes hyperparameter tuning efficiency using a SQLite database and Plotly visualizations. I need you to update the project based on my mentor’s new direction — without removing or breaking any existing features.
+Please add the following new logic and UI sections while keeping all old functionalities intact:
+
+🔧 1. Database / Data Handling Updates
+	•	Ensure the experiments table includes these columns: dataset, model, tuning_method, best_score, time_sec, memory_bytes
+	•	If dataset or model columns don’t exist, add them:    ALTER TABLE experiments ADD COLUMN dataset TEXT;
+	•	ALTER TABLE experiments ADD COLUMN model TEXT;
+	•	  
+	•	Keep all existing data handling code as-is — just make sure the new columns are supported.
+
+📊 2. Add New Analysis Logic
+In the utils or analysis section (e.g., utils/visualization.py), add two helper functions:
+
+import pandas as pd
+
+def get_best_model_per_dataset(df):
+    return (
+        df.groupby(['dataset', 'model'])['best_score']
+          .mean()
+          .reset_index()
+          .sort_values(['dataset', 'best_score'], ascending=[True, False])
+    )
+
+def get_best_combo_per_dataset(df):
+    combo = (
+        df.groupby(['dataset', 'model', 'tuning_method'])['best_score']
+          .mean()
+          .reset_index()
+    )
+    best_combo = combo.loc[combo.groupby('dataset')['best_score'].idxmax()]
+    return best_combo
+	•	Do not remove any existing analysis functions — just add these.
+
+🖥️ 3. Streamlit Dashboard Enhancements
+In app.py, after loading the experiment DataFrame, add this logic:
+
+df = get_all_experiments()
+best_models = get_best_model_per_dataset(df)
+best_combos = get_best_combo_per_dataset(df)
+Then create a new section near the end of the dashboard called “Best Model & Tuning Method per Dataset” and add:
+
+import plotly.express as px
+
+st.subheader("🏆 Best Model & Tuning Method per Dataset")
+
+# Heatmap: Dataset vs Model
+fig1 = px.density_heatmap(
+    best_models, x='dataset', y='model', z='best_score',
+    color_continuous_scale='Viridis',
+    title="Model Performance Across Datasets"
+)
+st.plotly_chart(fig1, use_container_width=True)
+
+# Bar Chart: Best Combination per Dataset
+fig2 = px.bar(
+    best_combos, x='dataset', y='best_score', color='model',
+    text='tuning_method', title="Best Model–Tuning Combination per Dataset"
+)
+st.plotly_chart(fig2, use_container_width=True)
+
+# Summary Table
+st.dataframe(best_combos[['dataset', 'model', 'tuning_method', 'best_score']])
+
+# Highlight top performer
+top = best_combos.loc[best_combos['best_score'].idxmax()]
+st.success(
+    f"Overall Best: {top['model']} tuned with {top['tuning_method']} "
+    f"on {top['dataset']} dataset → Score: {top['best_score']:.2f}"
+)
+	•	Place this after the existing results or “Recommendations” section.
+	•	Keep your previous visualizations untouched.
+
+🏷️ 4. Rename Some UI Headings
+	•	Rename or adjust section titles for clarity:
+	◦	“Hyperparameter Efficiency” → “Model–Dataset Comparative Analysis”
+	◦	“Tuning Method Performance” → “Model vs Tuning Method Analysis”
+	◦	“Recommendations” → “Best Model & Tuning Method per Dataset”
+
+🧾 5. Optional: Add Summary Card (if easy)
+Add a metric showing the best overall model:
+
+summary = df.groupby('model')['best_score'].mean().sort_values(ascending=False)
+st.metric("Overall Best Performing Model", summary.idxmax(), f"{summary.max():.2f}")
+
+✅ Important Notes
+	•	Do not delete or refactor existing code unless absolutely necessary.
+	•	Preserve all existing plots, filters, and features.
+	•	Only add or rename sections as described above.
+	•	Ensure new code integrates smoothly with the current SQLite + Streamlit + Plotly setup.
+
+End goal: My app should now display both:
+	•	The existing tuning efficiency analysis, and
+	•	A new “Best Model & Tuning Method per Dataset” comparison view showing heatmap, bar chart, and summary table.
+Keep it fully functional, lightweight, and visually consistent with my current design.
