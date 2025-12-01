@@ -439,16 +439,4 @@ Interested in collaborating on ML optimization research? Feel free to reach out!
 - **Tuning Methods:** 6
 - **Statistical Tests:** 10+
 
----
-
-⭐ **Star this repository** if you find this research helpful!
-
-📖 **Read the full paper** in `attached_assets/` for detailed methodology and findings
-
-🔬 **Reproducibility:** All experiments use fixed random seeds for reproducibility
-
-💡 *"Optimization is not about finding the best algorithm, but the right algorithm for your problem."*
-
----
-
 **Made with 🧠 for advancing ML research** | Bridging theory and practice in hyperparameter optimization
